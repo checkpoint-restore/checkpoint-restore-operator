@@ -25,8 +25,42 @@ import (
 // CheckpointRestoreOperatorSpec defines the desired state of CheckpointRestoreOperator
 type CheckpointRestoreOperatorSpec struct {
 	// Important: Run "make" to regenerate code after modifying this file
-	CheckpointDirectory        string `json:"checkpointDirectory,omitempty"`
+	CheckpointDirectory string                `json:"checkpointDirectory,omitempty"`
+	GlobalPolicies      GlobalPolicySpec      `json:"globalPolicy,omitempty"`
+	ContainerPolicies   []ContainerPolicySpec `json:"containerPolicies,omitempty"`
+	PodPolicies         []PodPolicySpec       `json:"podPolicies,omitempty"`
+	NamespacePolicies   []NamespacePolicySpec `json:"namespacePolicies,omitempty"`
+}
+
+type GlobalPolicySpec struct {
+	MaxCheckpointsPerNamespace *int   `json:"maxCheckpointsPerNamespace,omitempty"`
+	MaxCheckpointsPerPod       *int   `json:"maxCheckpointsPerPod,omitempty"`
 	MaxCheckpointsPerContainer *int   `json:"maxCheckpointsPerContainer,omitempty"`
+	MaxCheckpointSize          *int64 `json:"maxCheckpointSize,omitempty"`
+	MaxTotalSizePerNamespace   *int64 `json:"maxTotalSizePerNamespace,omitempty"`
+	MaxTotalSizePerPod         *int64 `json:"maxTotalSizePerPod,omitempty"`
+	MaxTotalSizePerContainer   *int64 `json:"maxTotalSizePerContainer,omitempty"`
+}
+
+type ContainerPolicySpec struct {
+	Namespace      string `json:"namespace,omitempty"`
+	Pod            string `json:"pod,omitempty"`
+	Container      string `json:"container,omitempty"`
+	MaxCheckpoints *int64 `json:"maxCheckpoints,omitempty"`
+	MaxTotalSize   *int64 `json:"maxTotalSize,omitempty"`
+}
+
+type PodPolicySpec struct {
+	Namespace      string `json:"namespace,omitempty"`
+	Pod            string `json:"pod,omitempty"`
+	MaxCheckpoints *int64 `json:"maxCheckpoints,omitempty"`
+	MaxTotalSize   *int64 `json:"maxTotalSize,omitempty"`
+}
+
+type NamespacePolicySpec struct {
+	Namespace      string `json:"namespace,omitempty"`
+	MaxCheckpoints *int64 `json:"maxCheckpoints,omitempty"`
+	MaxTotalSize   *int64 `json:"maxTotalSize,omitempty"`
 }
 
 // CheckpointRestoreOperatorStatus defines the observed state of CheckpointRestoreOperator
