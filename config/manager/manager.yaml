@@ -73,10 +73,12 @@ spec:
         image: controller:latest
         name: manager
         securityContext:
-          allowPrivilegeEscalation: false
+          runAsNonRoot: false
+          runAsUser: 0
+          allowPrivilegeEscalation: true
           capabilities:
-            drop:
-              - "ALL"
+            drop: ["ALL"]
+            add: ["DAC_OVERRIDE", "FOWNER"]
         livenessProbe:
           httpGet:
             path: /healthz
@@ -98,5 +100,13 @@ spec:
           requests:
             cpu: 10m
             memory: 64Mi
+        volumeMounts:
+        - name: kubelet-checkpoints
+          mountPath: /var/lib/kubelet/checkpoints
       serviceAccountName: controller-manager
       terminationGracePeriodSeconds: 10
+      volumes:
+      - name: kubelet-checkpoints
+        hostPath:
+          path: /var/lib/kubelet/checkpoints
+          type: Directory
