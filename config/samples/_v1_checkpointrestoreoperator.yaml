@@ -15,15 +15,25 @@ spec:
     maxCheckpointsPerNamespace: 50
     maxCheckpointsPerPod: 30
     maxCheckpointsPerContainer: 10
+    maxCheckpointSize: 10
+    maxTotalSizePerNamespace: 1000
+    maxTotalSizePerPod: 500
+    maxTotalSizePerContainer: 100
   # containerPolicies:
   #   - namespace: <namespace>
   #     pod: <pod_name>
   #     container: <container_name>
   #     maxCheckpoints: 5
+  #     maxCheckpointSize: 10
+  #     maxTotalSize: 100
   # podPolicies:
   #   - namespace: <namespace>
   #     pod: <pod_name>
   #     maxCheckpoints: 10
+  #     maxCheckpointSize: 10
+  #     maxTotalSize: 500
   # namespacePolicies:
   #   - namespace: <namespace>
   #     maxCheckpoints: 15
+  #     maxCheckpointSize: 10
+  #     maxTotalSize: 1000
