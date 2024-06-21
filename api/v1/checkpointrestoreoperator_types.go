@@ -25,8 +25,36 @@ import (
 // CheckpointRestoreOperatorSpec defines the desired state of CheckpointRestoreOperator
 type CheckpointRestoreOperatorSpec struct {
 	// Important: Run "make" to regenerate code after modifying this file
-	CheckpointDirectory        string `json:"checkpointDirectory,omitempty"`
-	MaxCheckpointsPerContainer *int   `json:"maxCheckpointsPerContainer,omitempty"`
+	CheckpointDirectory      string                `json:"checkpointDirectory,omitempty"`
+	ApplyPoliciesImmediately bool                  `json:"applyPoliciesImmediately,omitempty"`
+	GlobalPolicies           GlobalPolicySpec      `json:"globalPolicy,omitempty"`
+	ContainerPolicies        []ContainerPolicySpec `json:"containerPolicies,omitempty"`
+	PodPolicies              []PodPolicySpec       `json:"podPolicies,omitempty"`
+	NamespacePolicies        []NamespacePolicySpec `json:"namespacePolicies,omitempty"`
+}
+
+type GlobalPolicySpec struct {
+	MaxCheckpointsPerNamespaces *int `json:"maxCheckpointsPerNamespace,omitempty"`
+	MaxCheckpointsPerPod        *int `json:"maxCheckpointsPerPod,omitempty"`
+	MaxCheckpointsPerContainer  *int `json:"maxCheckpointsPerContainer,omitempty"`
+}
+
+type ContainerPolicySpec struct {
+	Namespace      string `json:"namespace,omitempty"`
+	Pod            string `json:"pod,omitempty"`
+	Container      string `json:"container,omitempty"`
+	MaxCheckpoints *int64 `json:"maxCheckpoints,omitempty"`
+}
+
+type PodPolicySpec struct {
+	Namespace      string `json:"namespace,omitempty"`
+	Pod            string `json:"pod,omitempty"`
+	MaxCheckpoints *int64 `json:"maxCheckpoints,omitempty"`
+}
+
+type NamespacePolicySpec struct {
+	Namespace      string `json:"namespace,omitempty"`
+	MaxCheckpoints *int64 `json:"maxCheckpoints,omitempty"`
 }
 
 // CheckpointRestoreOperatorStatus defines the observed state of CheckpointRestoreOperator
