@@ -34,27 +34,37 @@ type CheckpointRestoreOperatorSpec struct {
 }
 
 type GlobalPolicySpec struct {
-	MaxCheckpointsPerNamespaces *int `json:"maxCheckpointsPerNamespace,omitempty"`
-	MaxCheckpointsPerPod        *int `json:"maxCheckpointsPerPod,omitempty"`
-	MaxCheckpointsPerContainer  *int `json:"maxCheckpointsPerContainer,omitempty"`
+	MaxCheckpointsPerNamespaces *int   `json:"maxCheckpointsPerNamespace,omitempty"`
+	MaxCheckpointsPerPod        *int   `json:"maxCheckpointsPerPod,omitempty"`
+	MaxCheckpointsPerContainer  *int   `json:"maxCheckpointsPerContainer,omitempty"`
+	MaxCheckpointSize           *int64 `json:"maxCheckpointSize,omitempty"`
+	MaxTotalSizePerNamespace    *int64 `json:"maxTotalSizePerNamespace,omitempty"`
+	MaxTotalSizePerPod          *int64 `json:"maxTotalSizePerPod,omitempty"`
+	MaxTotalSizePerContainer    *int64 `json:"maxTotalSizePerContainer,omitempty"`
 }
 
 type ContainerPolicySpec struct {
-	Namespace      string `json:"namespace,omitempty"`
-	Pod            string `json:"pod,omitempty"`
-	Container      string `json:"container,omitempty"`
-	MaxCheckpoints *int64 `json:"maxCheckpoints,omitempty"`
+	Namespace         string `json:"namespace,omitempty"`
+	Pod               string `json:"pod,omitempty"`
+	Container         string `json:"container,omitempty"`
+	MaxCheckpoints    *int64 `json:"maxCheckpoints,omitempty"`
+	MaxCheckpointSize *int64 `json:"maxCheckpointSize,omitempty"`
+	MaxTotalSize      *int64 `json:"maxTotalSize,omitempty"`
 }
 
 type PodPolicySpec struct {
-	Namespace      string `json:"namespace,omitempty"`
-	Pod            string `json:"pod,omitempty"`
-	MaxCheckpoints *int64 `json:"maxCheckpoints,omitempty"`
+	Namespace         string `json:"namespace,omitempty"`
+	Pod               string `json:"pod,omitempty"`
+	MaxCheckpoints    *int64 `json:"maxCheckpoints,omitempty"`
+	MaxCheckpointSize *int64 `json:"maxCheckpointSize,omitempty"`
+	MaxTotalSize      *int64 `json:"maxTotalSize,omitempty"`
 }
 
 type NamespacePolicySpec struct {
-	Namespace      string `json:"namespace,omitempty"`
-	MaxCheckpoints *int64 `json:"maxCheckpoints,omitempty"`
+	Namespace         string `json:"namespace,omitempty"`
+	MaxCheckpoints    *int64 `json:"maxCheckpoints,omitempty"`
+	MaxCheckpointSize *int64 `json:"maxCheckpointSize,omitempty"`
+	MaxTotalSize      *int64 `json:"maxTotalSize,omitempty"`
 }
 
 // CheckpointRestoreOperatorStatus defines the observed state of CheckpointRestoreOperator

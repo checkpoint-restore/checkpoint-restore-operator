@@ -52,7 +52,13 @@ spec:
                   properties:
                     container:
                       type: string
+                    maxCheckpointSize:
+                      format: int64
+                      type: integer
                     maxCheckpoints:
+                      format: int64
+                      type: integer
+                    maxTotalSize:
                       format: int64
                       type: integer
                     namespace:
@@ -63,17 +69,35 @@ spec:
                 type: array
               globalPolicy:
                 properties:
+                  maxCheckpointSize:
+                    format: int64
+                    type: integer
                   maxCheckpointsPerContainer:
                     type: integer
                   maxCheckpointsPerNamespace:
                     type: integer
                   maxCheckpointsPerPod:
                     type: integer
+                  maxTotalSizePerContainer:
+                    format: int64
+                    type: integer
+                  maxTotalSizePerNamespace:
+                    format: int64
+                    type: integer
+                  maxTotalSizePerPod:
+                    format: int64
+                    type: integer
                 type: object
               namespacePolicies:
                 items:
                   properties:
+                    maxCheckpointSize:
+                      format: int64
+                      type: integer
                     maxCheckpoints:
+                      format: int64
+                      type: integer
+                    maxTotalSize:
                       format: int64
                       type: integer
                     namespace:
@@ -83,7 +107,13 @@ spec:
               podPolicies:
                 items:
                   properties:
+                    maxCheckpointSize:
+                      format: int64
+                      type: integer
                     maxCheckpoints:
+                      format: int64
+                      type: integer
+                    maxTotalSize:
                       format: int64
                       type: integer
                     namespace:
