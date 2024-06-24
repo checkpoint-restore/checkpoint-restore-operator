@@ -9,5 +9,14 @@ metadata:
     app.kubernetes.io/created-by: checkpoint-restore-operator
   name: checkpointrestoreoperator-sample
 spec:
-  maxCheckpointsPerContainer: 5
   checkpointDirectory: /var/lib/kubelet/checkpoints
+  applyPoliciesImmediately: false
+  globalPolicy:
+    maxCheckpointsPerNamespace: 50
+    maxCheckpointsPerPod: 30
+    maxCheckpointsPerContainer: 10
+  containerPolicies:
+    - namespace: namespace-name
+      pod: pod-name
+      container: container-name
+      maxCheckpoints: 5
