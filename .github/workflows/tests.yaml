@@ -1,0 +1,48 @@
+name: Build and Deploy
+
+on: [push, pull_request]
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.21
+
+      - name: Install dependencies
+        run: |
+          # Install kind
+          curl -sLo kind "$(curl -sL https://api.github.com/repos/kubernetes-sigs/kind/releases/latest | jq -r '[.assets[] | select(.name == "kind-linux-amd64")] | first | .browser_download_url')"
+          chmod +x kind
+          sudo mv kind /bin/
+          
+          # Install kubectl
+          curl -LO "https://storage.googleapis.com/kubernetes-release/release/$(curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /bin/
+
+      - name: Create Kubernetes cluster
+        run: |
+          kind create cluster
+          kind export kubeconfig
+
+      - name: Load Docker image into kind cluster
+        run: |
+          make docker-build IMG=checkpoint-restore-operator:ci
+          kind load docker-image checkpoint-restore-operator:ci
+
+      - name: Deploy to Kubernetes
+        run: |
+          make install
+          make deploy IMG=checkpoint-restore-operator:ci
+
+      - name: Wait for deployments to be ready
+        run: ./test/wait_for_deployment.sh checkpoint-restore-operator-controller-manager
+
+      - name: Check resources
+        run: kubectl get all -n checkpoint-restore-operator-system
