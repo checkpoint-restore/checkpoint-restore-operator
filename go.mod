@@ -7,7 +7,7 @@ toolchain go1.21.5
 require (
 	github.com/checkpoint-restore/checkpointctl v1.1.0
 	github.com/containers/storage v1.51.0
-	github.com/fsnotify/fsnotify v1.6.0
+	github.com/fsnotify/fsnotify v1.7.0
 	github.com/go-logr/logr v1.3.0
 	github.com/onsi/ginkgo/v2 v2.13.0
 	github.com/onsi/gomega v1.29.0
