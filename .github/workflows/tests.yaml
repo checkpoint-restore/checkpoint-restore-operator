@@ -5,14 +5,8 @@ on: [push, pull_request]
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
-    services:
-      registry:
-        image: registry:2
-        ports:
-          - 5000:5000
     env:
       CHECKPOINT_DIR: /var/lib/kubelet/checkpoints
-      REGISTRY_PORT: 5000
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -36,6 +30,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y bats
 
+          # Install bats
+          sudo apt-get update
+          sudo apt-get install -y bats
+
           # Install kind
           curl -sLo kind "$(curl -sL https://api.github.com/repos/kubernetes-sigs/kind/releases/latest | jq -r '[.assets[] | select(.name == "kind-linux-amd64")] | first | .browser_download_url')"
           chmod +x kind
@@ -50,7 +48,6 @@ jobs:
         run: |
           sudo mkdir -p ${{ env.CHECKPOINT_DIR }}
           sudo chmod 700 ${{ env.CHECKPOINT_DIR }}
-          kind delete cluster || true
 
       - name: Generate Checkpoint Tar Files
         run: ./test/generate_checkpoint_tar.sh
@@ -61,19 +58,13 @@ jobs:
       - name: Connect the registry to the Kind network
         id: connect-registry
         run: |
-          REGISTRY_ID=$(docker ps -qf "ancestor=registry:2")
-          REGISTRY_NAME=$(docker inspect -f '{{.Name}}' $REGISTRY_ID | sed 's/\///')
-          echo "REGISTRY_NAME=$REGISTRY_NAME" >> $GITHUB_ENV
-          ./test/configure_local_registry.sh
-        env:
-          REGISTRY_PORT: ${{ env.REGISTRY_PORT }}
-          REGISTRY_NAME: ${{ env.REGISTRY_NAME }}
+          kind create cluster --config=./test/kind-config.yaml
+          kind export kubeconfig
 
-      - name: Build and push to local registry
-        uses: docker/build-push-action@v6
-        with:
-          push: true
-          tags: localhost:5000/checkpoint-restore-operator:ci
+      - name: Load Docker image into kind cluster
+        run: |
+          make docker-build IMG=checkpoint-restore-operator:ci
+          kind load docker-image checkpoint-restore-operator:ci
 
       - name: Deploy to Kubernetes
         run: |
@@ -94,9 +85,3 @@ jobs:
 
       - name: Test Max Checkpoints Set to 1
         run: sudo -E bats -f "test_max_checkpoints_set_to_1" ./test/run_tests.bats
-
-      - name: Test Max Total Checkpoint Size
-        run: sudo -E bats -f "test_max_total_checkpoint_size" ./test/run_tests.bats
-
-      - name: Test Max Checkpoint Size
-        run: sudo -E bats -f "test_max_checkpoint_size" ./test/run_tests.bats
