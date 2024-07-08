@@ -5,6 +5,8 @@ on: [push, pull_request]
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
+    env:
+      CHECKPOINT_DIR: /var/lib/kubelet/checkpoints
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -16,6 +18,10 @@ jobs:
 
       - name: Install dependencies
         run: |
+          # Install bats
+          sudo apt-get update
+          sudo apt-get install -y bats
+
           # Install kind
           curl -sLo kind "$(curl -sL https://api.github.com/repos/kubernetes-sigs/kind/releases/latest | jq -r '[.assets[] | select(.name == "kind-linux-amd64")] | first | .browser_download_url')"
           chmod +x kind
@@ -26,9 +32,17 @@ jobs:
           chmod +x kubectl
           sudo mv kubectl /bin/
 
+      - name: Prepare Checkpoints Directory in Host
+        run: |
+          sudo mkdir -p ${{ env.CHECKPOINT_DIR }}
+          sudo chmod 700 ${{ env.CHECKPOINT_DIR }}
+
+      - name: Generate Checkpoint Tar Files
+        run: ./test/generate_checkpoint_tar.sh
+
       - name: Create Kubernetes cluster
         run: |
-          kind create cluster
+          kind create cluster --config=./test/kind-config.yaml
           kind export kubeconfig
 
       - name: Load Docker image into kind cluster
@@ -46,3 +60,12 @@ jobs:
 
       - name: Check resources
         run: kubectl get all -n checkpoint-restore-operator-system
+
+      - name: Test Garbage Collection
+        run: sudo -E bats -f "test_garbage_collection" ./test/run_tests.bats
+
+      - name: Test Max Checkpoints Set to 0
+        run: sudo -E bats -f "test_max_checkpoints_set_to_0" ./test/run_tests.bats
+
+      - name: Test Max Checkpoints Set to 1
+        run: sudo -E bats -f "test_max_checkpoints_set_to_1" ./test/run_tests.bats
