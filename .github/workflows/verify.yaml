@@ -31,7 +31,7 @@ jobs:
         uses: codespell-project/actions-codespell@v2
         with:
           skip: vendor,*.svg
-      
+
       - name: ShellCheck and shfmt
         run: |
           shellcheck ./test/*.sh
@@ -60,7 +60,7 @@ jobs:
       - uses: dorny/paths-filter@v2
         id: changes
         with:
-          base: 'main'  
+          base: 'main'
           filters: |
             md:
               - 'README.md'
