@@ -11,7 +11,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version-file: 'go.mod'
 
       - name: Install ShellCheck and shfmt
         run: |
@@ -31,7 +31,7 @@ jobs:
         uses: codespell-project/actions-codespell@v2
         with:
           skip: vendor,*.svg
-      
+
       - name: ShellCheck and shfmt
         run: |
           shellcheck ./test/*.sh
@@ -44,7 +44,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version-file: 'go.mod'
 
       - name: verify go.mod/go.sum
         run: |
@@ -60,7 +60,7 @@ jobs:
       - uses: dorny/paths-filter@v2
         id: changes
         with:
-          base: 'main'  
+          base: 'main'
           filters: |
             md:
               - 'README.md'
