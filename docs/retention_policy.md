@@ -8,6 +8,7 @@ The checkpoint retention policy in the CheckpointRestoreOperator allows users to
 ## Applying a Retention Policy
 
 To apply a retention policy, you need to create a `CheckpointRestoreOperator` resource. Below is an example configuration:
+
 ```yaml
 `apiVersion: criu.org/v1
 kind: CheckpointRestoreOperator
@@ -26,19 +27,30 @@ spec:
     maxCheckpointsPerNamespace: 50
     maxCheckpointsPerPod: 30
     maxCheckpointsPerContainer: 10
+    maxCheckpointSize: 4  # Maximum size of a single checkpoint in MB
+    maxTotalSizePerNamespace: 1000  # Maximum total size of checkpoints per namespace in MB
+    maxTotalSizePerPod: 500  # Maximum total size of checkpoints per pod in MB
+    maxTotalSizePerContainer: 100  # Maximum total size of checkpoints per container in MB
   # containerPolicies:
   #   - namespace: namespace
   #     pod: pod_name
   #     container: container_name
   #     maxCheckpoints: 5
+  #     maxCheckpointSize: 6  # Maximum size of a single checkpoint in MB
+  #     maxTotalSize: 20  # Maximum total size of checkpoints for the container in MB
   # podPolicies:
   #   - namespace: namespace
   #     pod: pod_name
   #     maxCheckpoints: 10
+  #     maxCheckpointSize: 8  # Maximum size of a single checkpoint in MB
+  #     maxTotalSize: 50  # Maximum total size of checkpoints for the pod in MB
   # namespacePolicies:
   #   - namespace: namespace
-  #     maxCheckpoints: 15` 
+  #     maxCheckpoints: 15
+  #     maxCheckpointSize: 10  # Maximum size of a single checkpoint in MB
+  #     maxTotalSize: 200  # Maximum total size of checkpoints for the namespace in MB` 
 ```
+
 A sample configuration file is available under `./config/samples/_v1_checkpointrestoreoperator.yaml`.
 
 ## Understanding Policy Fields
@@ -49,18 +61,28 @@ A sample configuration file is available under `./config/samples/_v1_checkpointr
     -   `maxCheckpointsPerNamespace`: Maximum number of checkpoints per namespace.
     -   `maxCheckpointsPerPod`: Maximum number of checkpoints per pod.
     -   `maxCheckpointsPerContainer`: Maximum number of checkpoints per container.
--   `containerPolicies` (optional): Specific retention policies for containers.
+    -   `maxCheckpointSize`: Maximum size of a single checkpoint in MB.
+    -   `maxTotalSizePerNamespace`: Maximum total size of checkpoints per namespace in MB.
+    -   `maxTotalSizePerPod`: Maximum total size of checkpoints per pod in MB.
+    -   `maxTotalSizePerContainer`: Maximum total size of checkpoints per container in MB.
+-   `containerPolicies`: (Optional) Specific retention policies for containers.
     -   `namespace`: Namespace of the container.
     -   `pod`: Pod name of the container.
     -   `container`: Container name.
     -   `maxCheckpoints`: Maximum number of checkpoints for the container.
--   `podPolicies` (optional): Specific retention policies for pods.
+    -   `maxCheckpointSize`: Maximum size of a single checkpoint in MB.
+    -   `maxTotalSize`: Maximum total size of checkpoints for the container in MB.
+-   `podPolicies`: (Optional) Specific retention policies for pods.
     -   `namespace`: Namespace of the pod.
     -   `pod`: Pod name.
     -   `maxCheckpoints`: Maximum number of checkpoints for the pod.
--   `namespacePolicies` (optional): Specific retention policies for namespaces.
+    -   `maxCheckpointSize`: Maximum size of a single checkpoint in MB.
+    -   `maxTotalSize`: Maximum total size of checkpoints for the pod in MB.
+-   `namespacePolicies`: (Optional) Specific retention policies for namespaces.
     -   `namespace`: Namespace name.
     -   `maxCheckpoints`: Maximum number of checkpoints for the namespace.
+    -   `maxCheckpointSize`: Maximum size of a single checkpoint in MB.
+    -   `maxTotalSize`: Maximum total size of checkpoints for the namespace in MB.
 
 ## Policy Hierarchy and Specificity
 
@@ -73,7 +95,7 @@ The CheckpointRestoreOperator uses a hierarchical approach to apply retention po
 
 ### Policy Application
 
--   **Global Policy:** If no other policies are defined, the global policy will be applied. In the example above, the global policy limits checkpoints to 50 per namespace, 30 per pod, and 10 per container.
+-   **Global Policy:** If no other policies are defined, the global policy will be applied. In the example above, the global policy limits checkpoints to 50 per namespace, 30 per pod, 10 per container, with additional constraints on checkpoint size and total size.
 -   **Namespace Policy:** If a namespace policy is defined, it overrides the global policy for that specific namespace.
 -   **Pod Policy:** If a pod policy is defined, it overrides both the namespace and global policies for that specific pod.
 -   **Container Policy:** If a container policy is defined, it is the most specific and overrides pod, namespace, and global policies for that specific container.
