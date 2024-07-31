@@ -36,10 +36,14 @@ spec:
   #     pod: <pod_name>
   #     container: <container_name>
   #     maxCheckpoints: 5
+  #     maxCheckpointSize: 6  # Maximum size of a single checkpoint in MB
+  #     maxTotalSize: 20  # Maximum total size of checkpoints for the container in MB
   # podPolicies:
   #   - namespace: <namespace>
   #     pod: <pod_name>
   #     maxCheckpoints: 10
+  #     maxCheckpointSize: 8  # Maximum size of a single checkpoint in MB
+  #     maxTotalSize: 50  # Maximum total size of checkpoints for the pod in MB
   # namespacePolicies:
   #   - namespace: <namespace>
   #     maxCheckpoints: 15` 
@@ -54,18 +58,28 @@ A sample configuration file is available [here](/config/samples/_v1_checkpointre
     -   `maxCheckpointsPerNamespace`: Maximum number of checkpoints per namespace.
     -   `maxCheckpointsPerPod`: Maximum number of checkpoints per pod.
     -   `maxCheckpointsPerContainer`: Maximum number of checkpoints per container.
+    -   `maxCheckpointSize`: Maximum size of a single checkpoint in MB.
+    -   `maxTotalSizePerNamespace`: Maximum total size of checkpoints per namespace in MB.
+    -   `maxTotalSizePerPod`: Maximum total size of checkpoints per pod in MB.
+    -   `maxTotalSizePerContainer`: Maximum total size of checkpoints per container in MB.
 -   `containerPolicies` (optional): Specific retention policies for containers.
     -   `namespace`: Namespace of the container.
     -   `pod`: Pod name of the container.
     -   `container`: Container name.
     -   `maxCheckpoints`: Maximum number of checkpoints for the container.
+    -   `maxCheckpointSize`: Maximum size of a single checkpoint in MB.
+    -   `maxTotalSize`: Maximum total size of checkpoints for the container in MB.
 -   `podPolicies` (optional): Specific retention policies for pods.
     -   `namespace`: Namespace of the pod.
     -   `pod`: Pod name.
     -   `maxCheckpoints`: Maximum number of checkpoints for the pod.
+    -   `maxCheckpointSize`: Maximum size of a single checkpoint in MB.
+    -   `maxTotalSize`: Maximum total size of checkpoints for the pod in MB.
 -   `namespacePolicies` (optional): Specific retention policies for namespaces.
     -   `namespace`: Namespace name.
     -   `maxCheckpoints`: Maximum number of checkpoints for the namespace.
+    -   `maxCheckpointSize`: Maximum size of a single checkpoint in MB.
+    -   `maxTotalSize`: Maximum total size of checkpoints for the namespace in MB.
 
 ## Policy Hierarchy and Application
 
