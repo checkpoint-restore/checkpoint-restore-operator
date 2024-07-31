@@ -58,3 +58,27 @@ function teardown() {
   log_and_run ls -la "$CHECKPOINT_DIR"
   [ "$status" -eq 0 ]
 }
+
+@test "test_max_total_checkpoint_size" {
+  log_and_run kubectl apply -f ./test/test_bySize_checkpointrestoreoperator.yaml
+  [ "$status" -eq 0 ]
+  log_and_run ./test/generate_checkpoint_tar.sh large
+  [ "$status" -eq 0 ]
+  log_and_run ./test/wait_for_checkpoint_reduction.sh 2
+  [ "$status" -eq 0 ]
+  log_and_run ls -la "$CHECKPOINT_DIR"
+  [ "$status" -eq 0 ]
+}
+
+@test "test_max_checkpoint_size" {
+  log_and_run sed -i '/^  containerPolicies:/,/maxTotalSize: [0-9]*/ s/^/#/' ./test/test_bySize_checkpointrestoreoperator.yaml
+  [ "$status" -eq 0 ]
+  log_and_run kubectl apply -f ./test/test_bySize_checkpointrestoreoperator.yaml
+  [ "$status" -eq 0 ]
+  log_and_run ./test/generate_checkpoint_tar.sh large
+  [ "$status" -eq 0 ]
+  log_and_run ./test/wait_for_checkpoint_reduction.sh 0
+  [ "$status" -eq 0 ]
+  log_and_run ls -la "$CHECKPOINT_DIR"
+  [ "$status" -eq 0 ]
+}
