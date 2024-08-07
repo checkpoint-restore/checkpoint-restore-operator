@@ -5,8 +5,14 @@ on: [push, pull_request]
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
+    services:
+      registry:
+        image: registry:2
+        ports:
+          - 5000:5000
     env:
       CHECKPOINT_DIR: /var/lib/kubelet/checkpoints
+      REGISTRY_PORT: 5000
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -15,6 +21,14 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: 'go.mod'
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: network=host
 
       - name: Install dependencies
         run: |
@@ -45,15 +59,27 @@ jobs:
           kind create cluster --config=./test/kind-config.yaml
           kind export kubeconfig
 
-      - name: Load Docker image into kind cluster
+      - name: Connect the registry to the Kind network
+        id: connect-registry
         run: |
-          make docker-build IMG=checkpoint-restore-operator:ci
-          kind load docker-image checkpoint-restore-operator:ci
+          REGISTRY_ID=$(docker ps -qf "ancestor=registry:2")
+          REGISTRY_NAME=$(docker inspect -f '{{.Name}}' $REGISTRY_ID | sed 's/\///')
+          echo "REGISTRY_NAME=$REGISTRY_NAME" >> $GITHUB_ENV
+          ./test/configure_local_registry.sh
+        env:
+          REGISTRY_PORT: ${{ env.REGISTRY_PORT }}
+          REGISTRY_NAME: ${{ env.REGISTRY_NAME }}
+
+      - name: Build and push to local registry
+        uses: docker/build-push-action@v6
+        with:
+          push: true
+          tags: localhost:5000/checkpoint-restore-operator:ci
 
       - name: Deploy to Kubernetes
         run: |
           make install
-          make deploy IMG=checkpoint-restore-operator:ci
+          make deploy IMG=localhost:5000/checkpoint-restore-operator:ci
 
       - name: Wait for deployments to be ready
         run: ./test/wait_for_deployment.sh checkpoint-restore-operator-controller-manager
