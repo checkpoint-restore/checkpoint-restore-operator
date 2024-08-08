@@ -41,12 +41,57 @@ spec:
             description: CheckpointRestoreOperatorSpec defines the desired state of
               CheckpointRestoreOperator
             properties:
+              applyPoliciesImmediately:
+                type: boolean
               checkpointDirectory:
                 description: 'Important: Run "make" to regenerate code after modifying
                   this file'
                 type: string
-              maxCheckpointsPerContainer:
-                type: integer
+              containerPolicies:
+                items:
+                  properties:
+                    container:
+                      type: string
+                    maxCheckpoints:
+                      format: int64
+                      type: integer
+                    namespace:
+                      type: string
+                    pod:
+                      type: string
+                  type: object
+                type: array
+              globalPolicy:
+                properties:
+                  maxCheckpointsPerContainer:
+                    type: integer
+                  maxCheckpointsPerNamespace:
+                    type: integer
+                  maxCheckpointsPerPod:
+                    type: integer
+                type: object
+              namespacePolicies:
+                items:
+                  properties:
+                    maxCheckpoints:
+                      format: int64
+                      type: integer
+                    namespace:
+                      type: string
+                  type: object
+                type: array
+              podPolicies:
+                items:
+                  properties:
+                    maxCheckpoints:
+                      format: int64
+                      type: integer
+                    namespace:
+                      type: string
+                    pod:
+                      type: string
+                  type: object
+                type: array
             type: object
           status:
             description: CheckpointRestoreOperatorStatus defines the observed state
