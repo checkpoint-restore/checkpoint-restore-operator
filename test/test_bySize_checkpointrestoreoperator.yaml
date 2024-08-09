@@ -10,20 +10,15 @@ metadata:
   name: checkpointrestoreoperator-sample
 spec:
   checkpointDirectory: /var/lib/kubelet/checkpoints
-  applyPoliciesImmediately: false
+  applyPoliciesImmediately: true
   globalPolicy:
-    maxCheckpointsPerNamespace: 50
-    maxCheckpointsPerPod: 30
-    maxCheckpointsPerContainer: 10
+    maxCheckpointSize: 4
+    maxTotalSizePerNamespace: 1000
+    maxTotalSizePerPod: 500
+    maxTotalSizePerContainer: 100
   containerPolicies:
-    - namespace: <namespace>
-      pod: <pod_name>
-      container: <container_name>
-      maxCheckpoints: 5
-  podPolicies:
-    - namespace: <namespace>
-      pod: <pod_name>
-      maxCheckpoints: 10
-  namespacePolicies:
-    - namespace: <namespace>
-      maxCheckpoints: 15
+    - namespace: namespace
+      pod: podname
+      container: containername
+      maxCheckpointSize: 6
+      maxTotalSize: 12

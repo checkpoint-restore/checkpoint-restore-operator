@@ -41,12 +41,74 @@ spec:
             description: CheckpointRestoreOperatorSpec defines the desired state of
               CheckpointRestoreOperator
             properties:
+              applyPoliciesImmediately:
+                type: boolean
               checkpointDirectory:
                 description: 'Important: Run "make" to regenerate code after modifying
                   this file'
                 type: string
-              maxCheckpointsPerContainer:
-                type: integer
+              containerPolicies:
+                items:
+                  properties:
+                    container:
+                      type: string
+                    maxCheckpointSize:
+                      type: integer
+                    maxCheckpoints:
+                      type: integer
+                    maxTotalSize:
+                      type: integer
+                    namespace:
+                      type: string
+                    pod:
+                      type: string
+                  type: object
+                type: array
+              globalPolicy:
+                properties:
+                  maxCheckpointSize:
+                    type: integer
+                  maxCheckpointsPerContainer:
+                    type: integer
+                  maxCheckpointsPerNamespace:
+                    type: integer
+                  maxCheckpointsPerPod:
+                    type: integer
+                  maxTotalSizePerContainer:
+                    type: integer
+                  maxTotalSizePerNamespace:
+                    type: integer
+                  maxTotalSizePerPod:
+                    type: integer
+                type: object
+              namespacePolicies:
+                items:
+                  properties:
+                    maxCheckpointSize:
+                      type: integer
+                    maxCheckpoints:
+                      type: integer
+                    maxTotalSize:
+                      type: integer
+                    namespace:
+                      type: string
+                  type: object
+                type: array
+              podPolicies:
+                items:
+                  properties:
+                    maxCheckpointSize:
+                      type: integer
+                    maxCheckpoints:
+                      type: integer
+                    maxTotalSize:
+                      type: integer
+                    namespace:
+                      type: string
+                    pod:
+                      type: string
+                  type: object
+                type: array
             type: object
           status:
             description: CheckpointRestoreOperatorStatus defines the observed state
