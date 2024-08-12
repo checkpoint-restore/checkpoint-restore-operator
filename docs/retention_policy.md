@@ -27,6 +27,7 @@ spec:
   checkpointDirectory: /var/lib/kubelet/checkpoints
   applyPoliciesImmediately: false
   globalPolicy:
+    retainOrphan: true
     maxCheckpointsPerNamespace: 50
     maxCheckpointsPerPod: 30
     maxCheckpointsPerContainer: 10
@@ -35,6 +36,7 @@ spec:
   #   - namespace: <namespace>
   #     pod: <pod_name>
   #     container: <container_name>
+  #     retainOrphan: false  # Set to false will delete all orphan checkpoints
   #     maxCheckpoints: 5
   #     maxCheckpointSize: 6  # Maximum size of a single checkpoint in MB
   #     maxTotalSize: 20  # Maximum total size of checkpoints for the container in MB
@@ -55,6 +57,7 @@ A sample configuration file is available [here](/config/samples/_v1_checkpointre
 -   `checkpointDirectory`: Specifies the directory where checkpoints are stored.
 -   `applyPoliciesImmediately`: If set to `true`, the policies are applied immediately. If `false` (default value), they are applied after new checkpoint creation.
 -   `globalPolicy`: Defines global checkpoint retention limits.
+    -   `retainOrphan`: If set to `true` (default), orphan checkpoints (checkpoints whose associated resources have been deleted) will be retained. If set to `false`, orphan checkpoints will be automatically deleted.
     -   `maxCheckpointsPerNamespace`: Maximum number of checkpoints per namespace.
     -   `maxCheckpointsPerPod`: Maximum number of checkpoints per pod.
     -   `maxCheckpointsPerContainer`: Maximum number of checkpoints per container.
@@ -66,17 +69,20 @@ A sample configuration file is available [here](/config/samples/_v1_checkpointre
     -   `namespace`: Namespace of the container.
     -   `pod`: Pod name of the container.
     -   `container`: Container name.
+    -   `retainOrphan`: If set to `true` (default), orphan checkpoints for this container will be retained. If set to `false`, orphan checkpoints will be deleted.
     -   `maxCheckpoints`: Maximum number of checkpoints for the container.
     -   `maxCheckpointSize`: Maximum size of a single checkpoint in MB.
     -   `maxTotalSize`: Maximum total size of checkpoints for the container in MB.
 -   `podPolicies` (optional): Specific retention policies for pods.
     -   `namespace`: Namespace of the pod.
     -   `pod`: Pod name.
+    -   `retainOrphan`: If set to `true` (default), orphan checkpoints for this pod will be retained. If set to `false`, orphan checkpoints will be deleted.
     -   `maxCheckpoints`: Maximum number of checkpoints for the pod.
     -   `maxCheckpointSize`: Maximum size of a single checkpoint in MB.
     -   `maxTotalSize`: Maximum total size of checkpoints for the pod in MB.
 -   `namespacePolicies` (optional): Specific retention policies for namespaces.
     -   `namespace`: Namespace name.
+    -   `retainOrphan`: If set to `true` (default), orphan checkpoints for this namespace will be retained. If set to `false`, orphan checkpoints will be deleted.
     -   `maxCheckpoints`: Maximum number of checkpoints for the namespace.
     -   `maxCheckpointSize`: Maximum size of a single checkpoint in MB.
     -   `maxTotalSize`: Maximum total size of checkpoints for the namespace in MB.
