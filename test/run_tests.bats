@@ -82,3 +82,14 @@ function teardown() {
   log_and_run ls -la "$CHECKPOINT_DIR"
   [ "$status" -eq 0 ]
 }
+
+@test "test_orphan_retention_policy" {
+  log_and_run kubectl apply -f ./test/test_orphan_checkpointrestoreoperator.yaml
+  [ "$status" -eq 0 ]
+  log_and_run ./test/generate_checkpoint_tar.sh
+  [ "$status" -eq 0 ]
+  log_and_run ./test/wait_for_checkpoint_reduction.sh 0
+  [ "$status" -eq 0 ]
+  log_and_run ls -la "$CHECKPOINT_DIR"
+  [ "$status" -eq 0 ]
+}

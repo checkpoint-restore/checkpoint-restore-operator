@@ -105,3 +105,6 @@ jobs:
 
       - name: Test Max Checkpoint Size
         run: sudo -E bats -f "test_max_checkpoint_size" ./test/run_tests.bats
+
+      - name: Test orphan retention
+        run: sudo -E bats -f "test_orphan_retention_policy" ./test/run_tests.bats
