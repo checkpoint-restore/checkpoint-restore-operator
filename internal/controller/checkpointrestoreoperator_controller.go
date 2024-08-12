@@ -36,7 +36,14 @@ import (
 	metadata "github.com/checkpoint-restore/checkpointctl/lib"
 	"github.com/containers/storage/pkg/archive"
 	"github.com/go-logr/logr"
+	v1 "k8s.io/api/core/v1"
+	k8err "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/cache"
 	kubelettypes "k8s.io/kubelet/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -68,6 +75,7 @@ var (
 	maxCheckpointsPerContainer int = 10
 	maxCheckpointsPerPod       int = 20
 	maxCheckpointsPerNamespace int = 30
+	retainOrphan               *bool
 	maxCheckpointSize          int = math.MaxInt32
 	maxTotalSizePerPod         int = math.MaxInt32
 	maxTotalSizePerContainer   int = math.MaxInt32
@@ -121,6 +129,7 @@ func (r *CheckpointRestoreOperatorReconciler) Reconcile(ctx context.Context, req
 }
 
 func resetAllPoliciesToDefault(log logr.Logger) {
+	retainOrphan = nil
 	maxCheckpointsPerContainer = 10
 	maxCheckpointsPerPod = 20
 	maxCheckpointsPerNamespace = 30
@@ -136,9 +145,21 @@ func resetAllPoliciesToDefault(log logr.Logger) {
 	log.Info("Policies have been reset to their default values")
 }
 
+func ptr(b bool) *bool {
+	return &b
+}
+
 func (r *CheckpointRestoreOperatorReconciler) handleGlobalPolicies(log logr.Logger, globalPolicies *criuorgv1.GlobalPolicySpec) {
 	policyMutex.Lock()
 	defer policyMutex.Unlock()
+
+	if globalPolicies.RetainOrphan == nil {
+		retainOrphan = ptr(true)
+		log.Info("RetainOrphan policy not set, using default", "retainOrphan", retainOrphan)
+	} else {
+		retainOrphan = globalPolicies.RetainOrphan
+		log.Info("Changed RetainOrphan policy", "retainOrphan", retainOrphan)
+	}
 
 	if globalPolicies.MaxCheckpointsPerContainer != nil && *globalPolicies.MaxCheckpointsPerContainer >= 0 {
 		maxCheckpointsPerContainer = *globalPolicies.MaxCheckpointsPerContainer
@@ -326,6 +347,7 @@ func getCheckpointArchiveInformation(log logr.Logger, checkpointPath string) (*c
 }
 
 type Policy struct {
+	RetainOrphan      bool
 	MaxCheckpoints    int
 	MaxCheckpointSize int
 	MaxTotalSize      int
@@ -342,20 +364,30 @@ func applyPolicies(log logr.Logger, details *checkpointDetails) {
 		return *value
 	}
 
+	ifNil := func(value *bool) bool {
+		if value == nil {
+			return true
+		}
+		return *value
+	}
+
 	if policy := findContainerPolicy(details); policy != nil {
 		handleCheckpointsForLevel(log, details, "container", Policy{
+			RetainOrphan:      ifNil(policy.RetainOrphan),
 			MaxCheckpoints:    toInfinity(policy.MaxCheckpoints),
 			MaxCheckpointSize: toInfinity(policy.MaxCheckpointSize) * MB,
 			MaxTotalSize:      toInfinity(policy.MaxTotalSize) * MB,
 		})
 	} else if policy := findPodPolicy(details); policy != nil {
 		handleCheckpointsForLevel(log, details, "pod", Policy{
+			RetainOrphan:      ifNil(policy.RetainOrphan),
 			MaxCheckpoints:    toInfinity(policy.MaxCheckpoints),
 			MaxCheckpointSize: toInfinity(policy.MaxCheckpointSize) * MB,
 			MaxTotalSize:      toInfinity(policy.MaxTotalSize) * MB,
 		})
 	} else if policy := findNamespacePolicy(details); policy != nil {
 		handleCheckpointsForLevel(log, details, "namespace", Policy{
+			RetainOrphan:      ifNil(policy.RetainOrphan),
 			MaxCheckpoints:    toInfinity(policy.MaxCheckpoints),
 			MaxCheckpointSize: toInfinity(policy.MaxCheckpointSize) * MB,
 			MaxTotalSize:      toInfinity(policy.MaxTotalSize) * MB,
@@ -363,16 +395,19 @@ func applyPolicies(log logr.Logger, details *checkpointDetails) {
 	} else {
 		// Apply global policies if no specific policy found
 		handleCheckpointsForLevel(log, details, "container", Policy{
+			RetainOrphan:      *retainOrphan,
 			MaxCheckpoints:    maxCheckpointsPerContainer,
 			MaxCheckpointSize: maxCheckpointSize,
 			MaxTotalSize:      maxTotalSizePerContainer,
 		})
 		handleCheckpointsForLevel(log, details, "pod", Policy{
+			RetainOrphan:      *retainOrphan,
 			MaxCheckpoints:    maxCheckpointsPerPod,
 			MaxCheckpointSize: maxCheckpointSize,
 			MaxTotalSize:      maxTotalSizePerPod,
 		})
 		handleCheckpointsForLevel(log, details, "namespace", Policy{
+			RetainOrphan:      *retainOrphan,
 			MaxCheckpoints:    maxCheckpointsPerNamespace,
 			MaxCheckpointSize: maxCheckpointSize,
 			MaxTotalSize:      maxTotalSizePerNamespace,
@@ -523,6 +558,27 @@ func handleCheckpointsForLevel(log logr.Logger, details *checkpointDetails, leve
 		filteredArchives = append(filteredArchives, archive)
 	}
 
+	if !policy.RetainOrphan {
+		exist, err := resourceExistsInCluster(level, details)
+		if err != nil {
+			log.Error(err, "failed to check if resource exists in cluster", "level", level)
+		}
+
+		if !exist {
+			log.Info("RetainOrphan is set to false, deleting all checkpoints", "level", level)
+
+			for _, archive := range filteredArchives {
+				log.Info("Deleting checkpoint archive due to retainCheckpoint=false", "archive", archive)
+				err := os.Remove(archive)
+				if err != nil {
+					log.Error(err, "failed to remove checkpoint archive", "archive", archive)
+				}
+			}
+
+			return
+		}
+	}
+
 	checkpointArchivesCounter := len(filteredArchives)
 	totalSize := int64(0)
 	archiveSizes := make(map[string]int64)
@@ -643,6 +699,148 @@ func selectArchivesToDelete(log logr.Logger, archives []string, archiveSizes map
 	return toDelete
 }
 
+func resourceExistsInCluster(level string, details *checkpointDetails) (bool, error) {
+	switch level {
+	case "container":
+		pod, err := getPodFromNamespace(details.namespace, details.pod)
+		if err != nil {
+			if isNotFoundError(err) {
+				return false, nil
+			}
+			return false, err
+		}
+		for _, container := range pod.Spec.Containers {
+			if container.Name == details.container {
+				return true, nil
+			}
+		}
+		return false, nil
+
+	case "pod":
+		_, err := getPodFromNamespace(details.namespace, details.pod)
+		if err != nil {
+			if isNotFoundError(err) {
+				return false, nil
+			}
+			return false, err
+		}
+		return true, nil
+
+	case "namespace":
+		_, err := getNamespace(details.namespace)
+		if err != nil {
+			if isNotFoundError(err) {
+				return false, nil
+			}
+			return false, err
+		}
+		return true, nil
+
+	default:
+		return false, fmt.Errorf("invalid level: %s", level)
+	}
+}
+
+func isNotFoundError(err error) bool {
+	return k8err.IsNotFound(err)
+}
+
+func getKubernetesClient() (*kubernetes.Clientset, error) {
+	// Use in-cluster configuration
+	config, err := rest.InClusterConfig()
+	if err != nil {
+		return nil, err
+	}
+	return kubernetes.NewForConfig(config)
+}
+
+func getPodFromNamespace(namespace, podName string) (*v1.Pod, error) {
+	clientset, err := getKubernetesClient()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Kubernetes client: %v", err)
+	}
+
+	pod, err := clientset.CoreV1().Pods(namespace).Get(context.TODO(), podName, metav1.GetOptions{})
+	if err != nil {
+		return nil, err
+	}
+
+	return pod, nil
+}
+
+func getNamespace(namespace string) (*v1.Namespace, error) {
+	clientset, err := getKubernetesClient()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Kubernetes client: %v", err)
+	}
+
+	ns, err := clientset.CoreV1().Namespaces().Get(context.TODO(), namespace, metav1.GetOptions{})
+	if err != nil {
+		return nil, err
+	}
+
+	return ns, nil
+}
+
+func (gc *garbageCollector) PodWatcher(log logr.Logger, stopCh <-chan struct{}) {
+	clientset, err := getKubernetesClient()
+	if err != nil {
+		log.Error(err, "Failed to create Kubernetes client")
+		return
+	}
+
+	watchlist := cache.NewListWatchFromClient(
+		clientset.CoreV1().RESTClient(),
+		"pods",
+		metav1.NamespaceAll,
+		fields.Everything(),
+	)
+
+	_, controller := cache.NewInformer(
+		watchlist,
+		&v1.Pod{},
+		0,
+		cache.ResourceEventHandlerFuncs{
+			DeleteFunc: func(obj interface{}) {
+				pod, ok := obj.(*v1.Pod)
+				if !ok {
+					log.Info("Could not convert object to Pod")
+					return
+				}
+				handlePodDeleted(log, pod)
+			},
+		},
+	)
+
+	go controller.Run(stopCh)
+
+	<-stopCh
+	log.Info("PodWatcher has been stopped")
+}
+
+func handlePodDeleted(log logr.Logger, pod *v1.Pod) {
+	log.Info("Pod deleted", "pod", pod.Name)
+
+	containerNames := getContainerNames(pod)
+
+	for _, containerName := range containerNames {
+		details := &checkpointDetails{
+			namespace: pod.Namespace,
+			pod:       pod.Name,
+			container: containerName,
+		}
+		applyPolicies(log, details)
+	}
+}
+
+func getContainerNames(pod *v1.Pod) []string {
+	var containerNames []string
+	for _, container := range pod.Spec.Containers {
+		containerNames = append(containerNames, container.Name)
+	}
+	return containerNames
+}
+
 func (gc *garbageCollector) runGarbageCollector() {
 	// This function tries to detect newly created checkpoint archives with the help
 	// of inotify/fsnotify. If a new checkpoint archive is created we get a
@@ -674,6 +872,9 @@ func (gc *garbageCollector) runGarbageCollector() {
 	defer watcher.Close()
 
 	c := make(chan struct{})
+
+	// Start pod watcher in a separate goroutine
+	go gc.PodWatcher(log, c)
 
 	go func() {
 		for {
