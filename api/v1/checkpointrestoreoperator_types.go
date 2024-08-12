@@ -75,6 +75,8 @@ type CheckpointRestoreOperatorStatus struct {
 
 //+kubebuilder:object:root=true
 //+kubebuilder:subresource:status
+//+kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
+//+kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch
 
 // CheckpointRestoreOperator is the Schema for the checkpointrestoreoperators API
 type CheckpointRestoreOperator struct {
