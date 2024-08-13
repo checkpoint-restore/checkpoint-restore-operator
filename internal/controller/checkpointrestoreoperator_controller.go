@@ -45,11 +45,23 @@ import (
 	"github.com/fsnotify/fsnotify"
 )
 
+type RetentionPolicy int
+
+const (
+	ByCount RetentionPolicy = iota
+)
+
 var (
 	GarbageCollector           garbageCollector
-	checkpointDirectory        string = "/var/lib/kubelet/checkpoints/"
+	policyMutex                sync.RWMutex
+	checkpointDirectory        string = "/var/lib/kubelet/checkpoints"
 	quit                       chan bool
 	maxCheckpointsPerContainer int = 10
+	maxCheckpointsPerPod       int = 20
+	maxCheckpointsPerNamespace int = 30
+	containerPolicies          []criuorgv1.ContainerPolicySpec
+	podPolicies                []criuorgv1.PodPolicySpec
+	namespacePolicies          []criuorgv1.NamespacePolicySpec
 )
 
 type garbageCollector struct {
@@ -73,28 +85,82 @@ type CheckpointRestoreOperatorReconciler struct {
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.15.0/pkg/reconcile
 func (r *CheckpointRestoreOperatorReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	var input criuorgv1.CheckpointRestoreOperator
-
 	log := log.FromContext(ctx)
 
 	if err := r.Get(ctx, req.NamespacedName, &input); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	if input.Spec.MaxCheckpointsPerContainer != nil &&
-		*input.Spec.MaxCheckpointsPerContainer >= 0 &&
-		*input.Spec.MaxCheckpointsPerContainer != maxCheckpointsPerContainer {
-		maxCheckpointsPerContainer = *input.Spec.MaxCheckpointsPerContainer
-		log.Info("Changed MaxCheckpointsPerContainer", "maxCheckpointsPerContainer", maxCheckpointsPerContainer)
-	}
+	r.handleGlobalPolicies(log, &input.Spec.GlobalPolicies)
+	r.handleSpecificPolicies(log, &input.Spec)
 
 	if input.Spec.CheckpointDirectory != "" && input.Spec.CheckpointDirectory != checkpointDirectory {
 		checkpointDirectory = input.Spec.CheckpointDirectory
-		quit <- true
-		quit = make(chan bool)
-		go GarbageCollector.runGarbageCollector()
+		r.restartGarbageCollector()
+	}
+
+	if input.Spec.ApplyPoliciesImmediately {
+		go applyPoliciesImmediately(log, checkpointDirectory)
 	}
 
 	return ctrl.Result{}, nil
+}
+
+func (r *CheckpointRestoreOperatorReconciler) handleGlobalPolicies(log logr.Logger, globalPolicies *criuorgv1.GlobalPolicySpec) {
+	policyMutex.Lock()
+	defer policyMutex.Unlock()
+
+	if globalPolicies.MaxCheckpointsPerContainer != nil && *globalPolicies.MaxCheckpointsPerContainer >= 0 {
+		maxCheckpointsPerContainer = *globalPolicies.MaxCheckpointsPerContainer
+		log.Info("Changed MaxCheckpointsPerContainer", "maxCheckpointsPerContainer", maxCheckpointsPerContainer)
+	}
+
+	if globalPolicies.MaxCheckpointsPerPod != nil && *globalPolicies.MaxCheckpointsPerPod >= 0 {
+		maxCheckpointsPerPod = *globalPolicies.MaxCheckpointsPerPod
+		log.Info("Changed MaxCheckpointsPerPod", "maxCheckpointsPerPod", maxCheckpointsPerPod)
+	}
+
+	if globalPolicies.MaxCheckpointsPerNamespaces != nil && *globalPolicies.MaxCheckpointsPerNamespaces >= 0 {
+		maxCheckpointsPerNamespace = *globalPolicies.MaxCheckpointsPerNamespaces
+		log.Info("Changed MaxCheckpointsPerNamespace", "maxCheckpointsPerNamespace", maxCheckpointsPerNamespace)
+	}
+}
+
+func (r *CheckpointRestoreOperatorReconciler) handleSpecificPolicies(log logr.Logger, spec *criuorgv1.CheckpointRestoreOperatorSpec) {
+	policyMutex.Lock()
+	defer policyMutex.Unlock()
+
+	// Clear existing policies before applying new ones
+	containerPolicies = nil
+	podPolicies = nil
+	namespacePolicies = nil
+
+	if spec.ContainerPolicies != nil && len(spec.ContainerPolicies) > 0 {
+		containerPolicies = spec.ContainerPolicies
+		log.Info("Found and applied container-specific policies", "count", len(containerPolicies))
+	} else {
+		log.Info("No container-specific policies found")
+	}
+
+	if spec.PodPolicies != nil && len(spec.PodPolicies) > 0 {
+		podPolicies = spec.PodPolicies
+		log.Info("Found and applied pod-specific policies", "count", len(podPolicies))
+	} else {
+		log.Info("No pod-specific policies found")
+	}
+
+	if spec.NamespacePolicies != nil && len(spec.NamespacePolicies) > 0 {
+		namespacePolicies = spec.NamespacePolicies
+		log.Info("Found and applied namespace-specific policies", "count", len(namespacePolicies))
+	} else {
+		log.Info("No namespace-specific policies found")
+	}
+}
+
+func (r *CheckpointRestoreOperatorReconciler) restartGarbageCollector() {
+	quit <- true
+	quit = make(chan bool)
+	go GarbageCollector.runGarbageCollector()
 }
 
 // UntarFiles unpack only specified files from an archive to the destination directory.
@@ -214,47 +280,162 @@ func getCheckpointArchiveInformation(log logr.Logger, checkpointPath string) (*c
 	return details, nil
 }
 
+func applyPolicies(log logr.Logger, details *checkpointDetails) {
+	policyMutex.Lock()
+	defer policyMutex.Unlock()
+
+	if policy := findContainerPolicy(details); policy != nil {
+		handleCheckpointsForLevel(log, details, "container", int(*policy.MaxCheckpoints))
+	} else if policy := findPodPolicy(details); policy != nil {
+		handleCheckpointsForLevel(log, details, "pod", int(*policy.MaxCheckpoints))
+	} else if policy := findNamespacePolicy(details); policy != nil {
+		handleCheckpointsForLevel(log, details, "namespace", int(*policy.MaxCheckpoints))
+	} else {
+		// Apply global policies if no specific policy found
+		handleCheckpointsForLevel(log, details, "container", maxCheckpointsPerContainer)
+		handleCheckpointsForLevel(log, details, "pod", maxCheckpointsPerPod)
+		handleCheckpointsForLevel(log, details, "namespace", maxCheckpointsPerNamespace)
+	}
+}
+
+func findContainerPolicy(details *checkpointDetails) *criuorgv1.ContainerPolicySpec {
+	for _, policy := range containerPolicies {
+		if policy.Namespace == details.namespace && policy.Pod == details.pod && policy.Container == details.container {
+			return &policy
+		}
+	}
+	return nil
+}
+
+func findPodPolicy(details *checkpointDetails) *criuorgv1.PodPolicySpec {
+	for _, policy := range podPolicies {
+		if policy.Namespace == details.namespace && policy.Pod == details.pod {
+			return &policy
+		}
+	}
+	return nil
+}
+
+func findNamespacePolicy(details *checkpointDetails) *criuorgv1.NamespacePolicySpec {
+	for _, policy := range namespacePolicies {
+		if policy.Namespace == details.namespace {
+			return &policy
+		}
+	}
+	return nil
+}
+
+func applyPoliciesImmediately(log logr.Logger, checkpointDirectory string) {
+	log.Info("Applying policies immediately")
+
+	checkpointFiles, err := filepath.Glob(filepath.Join(checkpointDirectory, "checkpoint-*_*-*-*.tar"))
+	if err != nil {
+		log.Error(err, "Failed to list checkpoint files")
+		return
+	}
+
+	if len(checkpointFiles) == 0 {
+		log.Info("No checkpoint files found")
+		return
+	}
+
+	categorizedCheckpoints := categorizeCheckpoints(log, checkpointFiles)
+
+	for _, details := range categorizedCheckpoints {
+		applyPolicies(log, details)
+	}
+}
+
+func categorizeCheckpoints(log logr.Logger, checkpointFiles []string) map[string]*checkpointDetails {
+	categorizedCheckpoints := make(map[string]*checkpointDetails)
+
+	for _, checkpointFile := range checkpointFiles {
+		details, err := getCheckpointArchiveInformation(log, checkpointFile)
+		if err != nil {
+			log.Error(err, "Failed to get checkpoint archive information", "checkpointFile", checkpointFile)
+			continue
+		}
+
+		key := fmt.Sprintf("%s/%s/%s", details.namespace, details.pod, details.container)
+		categorizedCheckpoints[key] = details
+	}
+
+	return categorizedCheckpoints
+}
+
 func handleWriteFinished(ctx context.Context, event fsnotify.Event) {
 	log := log.FromContext(ctx)
-	// We need to extract the namespace, pod and container name from the checkpoint archive.
-	// Using this information we can find checkpoint archives from the same namespace/pod/container
-	// combination and potentially delete them if there are more than the threshold.
 	details, err := getCheckpointArchiveInformation(log, event.Name)
 	if err != nil {
 		log.Error(err, "runGarbageCollector():getCheckpointArchiveInformation()")
 		return
 	}
-	globPattern := filepath.Join(
-		checkpointDirectory,
-		fmt.Sprintf(
-			// This glob pattern tries to match RFC3339 (including leaf seconds)
-			"checkpoint-%s_%s-%s-[0-9][0-9][0-9][0-9]-[0-2][0-9]-[0-3][0-9]T[0-2][0-9]:[0-5][0-9]:[0-6][0-9]*.tar",
-			details.pod,
-			details.namespace,
-			details.container,
-		),
-	)
+
+	applyPolicies(log, details)
+}
+
+func handleCheckpointsForLevel(log logr.Logger, details *checkpointDetails, level string, maxCheckpoints int) {
+	if maxCheckpoints <= 0 {
+		return
+	}
+
+	var globPattern string
+	switch level {
+	case "container":
+		globPattern = filepath.Join(
+			checkpointDirectory,
+			fmt.Sprintf(
+				"checkpoint-%s_%s-%s-[0-9][0-9][0-9][0-9]-[0-2][0-9]-[0-3][0-9]T[0-2][0-9]:[0-5][0-9]:[0-6][0-9]*.tar",
+				details.pod,
+				details.namespace,
+				details.container,
+			),
+		)
+	case "pod":
+		globPattern = filepath.Join(
+			checkpointDirectory,
+			fmt.Sprintf(
+				"checkpoint-%s_%s-*-*.tar",
+				details.pod,
+				details.namespace,
+			),
+		)
+	case "namespace":
+		globPattern = filepath.Join(
+			checkpointDirectory,
+			fmt.Sprintf(
+				"checkpoint-*_%s-*-*.tar",
+				details.namespace,
+			),
+		)
+	}
 
 	checkpointArchives, err := filepath.Glob(globPattern)
 	if err != nil {
-		log.Error(
-			err,
-			"error looking for checkpoint archives with",
-			"pattern",
-			globPattern,
-		)
+		log.Error(err, "error looking for checkpoint archives", "pattern", globPattern)
 		return
 	}
 
-	checkpointArchivesCounter := len(checkpointArchives)
-	if checkpointArchivesCounter <= maxCheckpointsPerContainer {
-		// Nothing to clean up, return early.
-		return
+	var filteredArchives []string
+	for _, archive := range checkpointArchives {
+		archiveDetails, err := getCheckpointArchiveInformation(log, archive)
+		if err != nil {
+			log.Error(err, "failed to get archive details", "archive", archive)
+			continue
+		}
+
+		if (level == "pod" && findContainerPolicy(archiveDetails) != nil) ||
+			(level == "namespace" && (findContainerPolicy(archiveDetails) != nil || findPodPolicy(archiveDetails) != nil)) {
+			continue
+		}
+
+		filteredArchives = append(filteredArchives, archive)
 	}
 
+	checkpointArchivesCounter := len(filteredArchives)
 	archivesToDelete := make(map[int64]string)
 
-	for _, c := range checkpointArchives {
+	for _, c := range filteredArchives {
 		fi, err := os.Stat(c)
 		if err != nil {
 			log.Error(
@@ -263,41 +444,58 @@ func handleWriteFinished(ctx context.Context, event fsnotify.Event) {
 				"file",
 				c,
 			)
+			continue
 		}
 		archivesToDelete[fi.ModTime().UnixMicro()] = c
 	}
 
-	keys := make([]int64, len(archivesToDelete))
-	i := 0
-	for key := range archivesToDelete {
-		keys[i] = key
-		i++
+	// Handle excess checkpoints by count
+	if maxCheckpoints > 0 && checkpointArchivesCounter > maxCheckpoints {
+		excessCount := int64(checkpointArchivesCounter - maxCheckpoints)
+		log.Info("Checkpoint count exceeds limit", "checkpointArchivesCounter", checkpointArchivesCounter, "maxCheckpoints", maxCheckpoints, "excessCount", excessCount)
+		toDelete := selectArchivesToDelete(log, checkpointArchives, excessCount, ByCount)
+		for _, archive := range toDelete {
+			log.Info("Deleting checkpoint archive due to excess count", "archive", archive)
+			err := os.Remove(archive)
+			if err != nil {
+				log.Error(err, "removal of checkpoint archive failed", "archive", archive)
+			}
+			checkpointArchivesCounter--
+			if checkpointArchivesCounter <= maxCheckpoints {
+				break
+			}
+		}
 	}
-	sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
-	for _, key := range keys {
-		log.Info(
-			"Deleting container checkpoint archive",
-			"container", details.container,
-			"archive", archivesToDelete[key],
-		)
+}
 
-		err = os.Remove(archivesToDelete[key])
-		if err != nil {
-			// If the removal fails the checkpoint archive might have been
-			// deleted externally. This is not fatal but unexpected.
-			// Logging it as an error, but not returning an error.
-			log.Error(
-				err,
-				"Removal of checkpoint archive failed",
-				"container", details.container,
-				"archive", archivesToDelete[key],
-			)
-		}
-		checkpointArchivesCounter -= 1
-		if checkpointArchivesCounter <= maxCheckpointsPerContainer {
-			break
+func selectArchivesToDelete(log logr.Logger, archives []string, excess int64, policy RetentionPolicy) []string {
+	toDelete := make([]string, 0)
+
+	switch policy {
+	case ByCount:
+		// Sort by modification time (oldest first)
+		sort.Slice(archives, func(i, j int) bool {
+			fileInfo1, err1 := os.Stat(archives[i])
+			if err1 != nil {
+				log.Error(err1, "Error stating file", archives[i])
+				return false
+			}
+
+			fileInfo2, err2 := os.Stat(archives[j])
+			if err2 != nil {
+				log.Error(err2, "Error stating file", archives[j])
+				return false
+			}
+
+			return fileInfo1.ModTime().Before(fileInfo2.ModTime())
+		})
+
+		for i := 0; i < int(excess); i++ {
+			toDelete = append(toDelete, archives[i])
 		}
 	}
+
+	return toDelete
 }
 
 func (gc *garbageCollector) runGarbageCollector() {
@@ -377,6 +575,9 @@ func (gc *garbageCollector) runGarbageCollector() {
 	// Add a path.
 	log.Info("Watching", "directory", checkpointDirectory)
 	log.Info("MaxCheckpointsPerContainer", "maxCheckpointsPerContainer", maxCheckpointsPerContainer)
+	log.Info("MaxCheckpointsPerPod", "maxCheckpointsPerPod", maxCheckpointsPerPod)
+	log.Info("MaxCheckpointsPerNamespace", "maxCheckpointsPerNamespace", maxCheckpointsPerNamespace)
+
 	err = watcher.Add(checkpointDirectory)
 	if err != nil {
 		log.Error(err, "runGarbageCollector()")
