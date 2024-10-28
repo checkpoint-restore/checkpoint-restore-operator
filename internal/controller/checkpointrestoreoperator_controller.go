@@ -135,21 +135,21 @@ func (r *CheckpointRestoreOperatorReconciler) handleSpecificPolicies(log logr.Lo
 	podPolicies = nil
 	namespacePolicies = nil
 
-	if spec.ContainerPolicies != nil && len(spec.ContainerPolicies) > 0 {
+	if len(spec.ContainerPolicies) > 0 {
 		containerPolicies = spec.ContainerPolicies
 		log.Info("Found and applied container-specific policies", "count", len(containerPolicies))
 	} else {
 		log.Info("No container-specific policies found")
 	}
 
-	if spec.PodPolicies != nil && len(spec.PodPolicies) > 0 {
+	if len(spec.PodPolicies) > 0 {
 		podPolicies = spec.PodPolicies
 		log.Info("Found and applied pod-specific policies", "count", len(podPolicies))
 	} else {
 		log.Info("No pod-specific policies found")
 	}
 
-	if spec.NamespacePolicies != nil && len(spec.NamespacePolicies) > 0 {
+	if len(spec.NamespacePolicies) > 0 {
 		namespacePolicies = spec.NamespacePolicies
 		log.Info("Found and applied namespace-specific policies", "count", len(namespacePolicies))
 	} else {
