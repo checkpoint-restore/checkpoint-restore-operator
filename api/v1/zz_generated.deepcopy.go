@@ -145,13 +145,13 @@ func (in *ContainerPolicySpec) DeepCopyInto(out *ContainerPolicySpec) {
 	}
 	if in.MaxCheckpointSize != nil {
 		in, out := &in.MaxCheckpointSize, &out.MaxCheckpointSize
-		*out = new(int)
-		**out = **in
+		x := (*in).DeepCopy()
+		*out = &x
 	}
 	if in.MaxTotalSize != nil {
 		in, out := &in.MaxTotalSize, &out.MaxTotalSize
-		*out = new(int)
-		**out = **in
+		x := (*in).DeepCopy()
+		*out = &x
 	}
 }
 
@@ -185,23 +185,23 @@ func (in *GlobalPolicySpec) DeepCopyInto(out *GlobalPolicySpec) {
 	}
 	if in.MaxCheckpointSize != nil {
 		in, out := &in.MaxCheckpointSize, &out.MaxCheckpointSize
-		*out = new(int)
-		**out = **in
+		x := (*in).DeepCopy()
+		*out = &x
 	}
 	if in.MaxTotalSizePerNamespace != nil {
 		in, out := &in.MaxTotalSizePerNamespace, &out.MaxTotalSizePerNamespace
-		*out = new(int)
-		**out = **in
+		x := (*in).DeepCopy()
+		*out = &x
 	}
 	if in.MaxTotalSizePerPod != nil {
 		in, out := &in.MaxTotalSizePerPod, &out.MaxTotalSizePerPod
-		*out = new(int)
-		**out = **in
+		x := (*in).DeepCopy()
+		*out = &x
 	}
 	if in.MaxTotalSizePerContainer != nil {
 		in, out := &in.MaxTotalSizePerContainer, &out.MaxTotalSizePerContainer
-		*out = new(int)
-		**out = **in
+		x := (*in).DeepCopy()
+		*out = &x
 	}
 }
 
@@ -225,13 +225,13 @@ func (in *NamespacePolicySpec) DeepCopyInto(out *NamespacePolicySpec) {
 	}
 	if in.MaxCheckpointSize != nil {
 		in, out := &in.MaxCheckpointSize, &out.MaxCheckpointSize
-		*out = new(int)
-		**out = **in
+		x := (*in).DeepCopy()
+		*out = &x
 	}
 	if in.MaxTotalSize != nil {
 		in, out := &in.MaxTotalSize, &out.MaxTotalSize
-		*out = new(int)
-		**out = **in
+		x := (*in).DeepCopy()
+		*out = &x
 	}
 }
 
@@ -255,13 +255,13 @@ func (in *PodPolicySpec) DeepCopyInto(out *PodPolicySpec) {
 	}
 	if in.MaxCheckpointSize != nil {
 		in, out := &in.MaxCheckpointSize, &out.MaxCheckpointSize
-		*out = new(int)
-		**out = **in
+		x := (*in).DeepCopy()
+		*out = &x
 	}
 	if in.MaxTotalSize != nil {
 		in, out := &in.MaxTotalSize, &out.MaxTotalSize
-		*out = new(int)
-		**out = **in
+		x := (*in).DeepCopy()
+		*out = &x
 	}
 }
 
