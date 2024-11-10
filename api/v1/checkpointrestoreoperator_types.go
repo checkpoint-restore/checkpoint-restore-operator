@@ -17,6 +17,7 @@ limitations under the License.
 package v1
 
 import (
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -34,37 +35,37 @@ type CheckpointRestoreOperatorSpec struct {
 }
 
 type GlobalPolicySpec struct {
-	MaxCheckpointsPerNamespaces *int `json:"maxCheckpointsPerNamespace,omitempty"`
-	MaxCheckpointsPerPod        *int `json:"maxCheckpointsPerPod,omitempty"`
-	MaxCheckpointsPerContainer  *int `json:"maxCheckpointsPerContainer,omitempty"`
-	MaxCheckpointSize           *int `json:"maxCheckpointSize,omitempty"`
-	MaxTotalSizePerNamespace    *int `json:"maxTotalSizePerNamespace,omitempty"`
-	MaxTotalSizePerPod          *int `json:"maxTotalSizePerPod,omitempty"`
-	MaxTotalSizePerContainer    *int `json:"maxTotalSizePerContainer,omitempty"`
+	MaxCheckpointsPerNamespaces *int               `json:"maxCheckpointsPerNamespace,omitempty"`
+	MaxCheckpointsPerPod        *int               `json:"maxCheckpointsPerPod,omitempty"`
+	MaxCheckpointsPerContainer  *int               `json:"maxCheckpointsPerContainer,omitempty"`
+	MaxCheckpointSize           *resource.Quantity `json:"maxCheckpointSize,omitempty"`
+	MaxTotalSizePerNamespace    *resource.Quantity `json:"maxTotalSizePerNamespace,omitempty"`
+	MaxTotalSizePerPod          *resource.Quantity `json:"maxTotalSizePerPod,omitempty"`
+	MaxTotalSizePerContainer    *resource.Quantity `json:"maxTotalSizePerContainer,omitempty"`
 }
 
 type ContainerPolicySpec struct {
-	Namespace         string `json:"namespace,omitempty"`
-	Pod               string `json:"pod,omitempty"`
-	Container         string `json:"container,omitempty"`
-	MaxCheckpoints    *int   `json:"maxCheckpoints,omitempty"`
-	MaxCheckpointSize *int   `json:"maxCheckpointSize,omitempty"`
-	MaxTotalSize      *int   `json:"maxTotalSize,omitempty"`
+	Namespace         string             `json:"namespace,omitempty"`
+	Pod               string             `json:"pod,omitempty"`
+	Container         string             `json:"container,omitempty"`
+	MaxCheckpoints    *int               `json:"maxCheckpoints,omitempty"`
+	MaxCheckpointSize *resource.Quantity `json:"maxCheckpointSize,omitempty"`
+	MaxTotalSize      *resource.Quantity `json:"maxTotalSize,omitempty"`
 }
 
 type PodPolicySpec struct {
-	Namespace         string `json:"namespace,omitempty"`
-	Pod               string `json:"pod,omitempty"`
-	MaxCheckpoints    *int   `json:"maxCheckpoints,omitempty"`
-	MaxCheckpointSize *int   `json:"maxCheckpointSize,omitempty"`
-	MaxTotalSize      *int   `json:"maxTotalSize,omitempty"`
+	Namespace         string             `json:"namespace,omitempty"`
+	Pod               string             `json:"pod,omitempty"`
+	MaxCheckpoints    *int               `json:"maxCheckpoints,omitempty"`
+	MaxCheckpointSize *resource.Quantity `json:"maxCheckpointSize,omitempty"`
+	MaxTotalSize      *resource.Quantity `json:"maxTotalSize,omitempty"`
 }
 
 type NamespacePolicySpec struct {
-	Namespace         string `json:"namespace,omitempty"`
-	MaxCheckpoints    *int   `json:"maxCheckpoints,omitempty"`
-	MaxCheckpointSize *int   `json:"maxCheckpointSize,omitempty"`
-	MaxTotalSize      *int   `json:"maxTotalSize,omitempty"`
+	Namespace         string             `json:"namespace,omitempty"`
+	MaxCheckpoints    *int               `json:"maxCheckpoints,omitempty"`
+	MaxCheckpointSize *resource.Quantity `json:"maxCheckpointSize,omitempty"`
+	MaxTotalSize      *resource.Quantity `json:"maxTotalSize,omitempty"`
 }
 
 // CheckpointRestoreOperatorStatus defines the observed state of CheckpointRestoreOperator
