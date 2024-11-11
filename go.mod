@@ -6,7 +6,7 @@ toolchain go1.23.2
 
 require (
 	github.com/checkpoint-restore/checkpointctl v1.3.0
-	github.com/containers/storage v1.55.1
+	github.com/containers/storage v1.56.0
 	github.com/fsnotify/fsnotify v1.8.0
 	github.com/go-logr/logr v1.4.2
 	github.com/onsi/ginkgo/v2 v2.21.0
@@ -44,6 +44,7 @@ require (
 	github.com/klauspost/compress v1.17.11 // indirect
 	github.com/klauspost/pgzip v1.2.6 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
+	github.com/moby/sys/capability v0.3.0 // indirect
 	github.com/moby/sys/mountinfo v0.7.2 // indirect
 	github.com/moby/sys/user v0.3.0 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
@@ -57,7 +58,6 @@ require (
 	github.com/prometheus/procfs v0.15.1 // indirect
 	github.com/sirupsen/logrus v1.9.3 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
-	github.com/syndtr/gocapability v0.0.0-20200815063812-42c35b437635 // indirect
 	github.com/ulikunitz/xz v0.5.12 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
