@@ -52,8 +52,11 @@ spec:
                   properties:
                     container:
                       type: string
+                    maxCheckpointSize:
+                      type: integer
                     maxCheckpoints:
-                      format: int64
+                      type: integer
+                    maxTotalSize:
                       type: integer
                     namespace:
                       type: string
@@ -63,18 +66,29 @@ spec:
                 type: array
               globalPolicy:
                 properties:
+                  maxCheckpointSize:
+                    type: integer
                   maxCheckpointsPerContainer:
                     type: integer
                   maxCheckpointsPerNamespace:
                     type: integer
                   maxCheckpointsPerPod:
                     type: integer
+                  maxTotalSizePerContainer:
+                    type: integer
+                  maxTotalSizePerNamespace:
+                    type: integer
+                  maxTotalSizePerPod:
+                    type: integer
                 type: object
               namespacePolicies:
                 items:
                   properties:
+                    maxCheckpointSize:
+                      type: integer
                     maxCheckpoints:
-                      format: int64
+                      type: integer
+                    maxTotalSize:
                       type: integer
                     namespace:
                       type: string
@@ -83,8 +97,11 @@ spec:
               podPolicies:
                 items:
                   properties:
+                    maxCheckpointSize:
+                      type: integer
                     maxCheckpoints:
-                      format: int64
+                      type: integer
+                    maxTotalSize:
                       type: integer
                     namespace:
                       type: string
