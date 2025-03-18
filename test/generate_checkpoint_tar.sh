@@ -30,12 +30,31 @@ increment_timestamp() {
 	date -d "$1 + 1 second" +%Y-%m-%dT%H:%M:%S
 }
 
+generate_large_file() {
+	local file_path=$1
+	local size_mb=$2
+	dd if=/dev/urandom of="$file_path" bs=1M count="$size_mb" status=none
+}
+
+CREATE_LARGE=false
+if [ "$1" == "large" ]; then
+	CREATE_LARGE=true
+	echo "Creating large files: $CREATE_LARGE"
+fi
+
 TIMESTAMP=$(date +%Y-%m-%dT%H:%M:%S)
 
 for _ in {1..5}; do
 	TAR_NAME="checkpoint.tar"
 	ORIGINAL_NAME="checkpoint-podname_namespace-containername-$TIMESTAMP.tar"
+
+	if [ "$CREATE_LARGE" = true ]; then
+		LARGE_FILE="$TEMP_DIR/large_file"
+		generate_large_file "$LARGE_FILE" 5
+	fi
+
 	create_checkpoint_tar "$TAR_NAME" "$ORIGINAL_NAME"
+
 	TIMESTAMP=$(increment_timestamp "$TIMESTAMP")
 done
 
