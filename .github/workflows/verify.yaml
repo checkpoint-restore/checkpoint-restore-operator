@@ -1,6 +1,10 @@
 name: verify
 
-on: [push, pull_request]
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
 
 jobs:
   lint:
@@ -11,7 +15,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: 'go.mod'
+          go-version-file: "go.mod"
 
       - name: Install ShellCheck and shfmt
         run: |
@@ -44,7 +48,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: 'go.mod'
+          go-version-file: "go.mod"
 
       - name: verify go.mod/go.sum
         run: |
@@ -60,7 +64,7 @@ jobs:
       - uses: dorny/paths-filter@v2
         id: changes
         with:
-          base: 'main'
+          base: "main"
           filters: |
             md:
               - 'README.md'
