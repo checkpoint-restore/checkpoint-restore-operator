@@ -5,7 +5,7 @@ Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-    http://www.apache.org/licenses/LICENSE-2.0
+	http://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -35,6 +35,7 @@ type CheckpointRestoreOperatorSpec struct {
 }
 
 type GlobalPolicySpec struct {
+	RetainOrphan                *bool              `json:"retainOrphan,omitempty"`
 	MaxCheckpointsPerNamespaces *int               `json:"maxCheckpointsPerNamespace,omitempty"`
 	MaxCheckpointsPerPod        *int               `json:"maxCheckpointsPerPod,omitempty"`
 	MaxCheckpointsPerContainer  *int               `json:"maxCheckpointsPerContainer,omitempty"`
@@ -48,6 +49,7 @@ type ContainerPolicySpec struct {
 	Namespace         string             `json:"namespace,omitempty"`
 	Pod               string             `json:"pod,omitempty"`
 	Container         string             `json:"container,omitempty"`
+	RetainOrphan      *bool              `json:"retainOrphan,omitempty"`
 	MaxCheckpoints    *int               `json:"maxCheckpoints,omitempty"`
 	MaxCheckpointSize *resource.Quantity `json:"maxCheckpointSize,omitempty"`
 	MaxTotalSize      *resource.Quantity `json:"maxTotalSize,omitempty"`
@@ -56,6 +58,7 @@ type ContainerPolicySpec struct {
 type PodPolicySpec struct {
 	Namespace         string             `json:"namespace,omitempty"`
 	Pod               string             `json:"pod,omitempty"`
+	RetainOrphan      *bool              `json:"retainOrphan,omitempty"`
 	MaxCheckpoints    *int               `json:"maxCheckpoints,omitempty"`
 	MaxCheckpointSize *resource.Quantity `json:"maxCheckpointSize,omitempty"`
 	MaxTotalSize      *resource.Quantity `json:"maxTotalSize,omitempty"`
@@ -63,6 +66,7 @@ type PodPolicySpec struct {
 
 type NamespacePolicySpec struct {
 	Namespace         string             `json:"namespace,omitempty"`
+	RetainOrphan      *bool              `json:"retainOrphan,omitempty"`
 	MaxCheckpoints    *int               `json:"maxCheckpoints,omitempty"`
 	MaxCheckpointSize *resource.Quantity `json:"maxCheckpointSize,omitempty"`
 	MaxTotalSize      *resource.Quantity `json:"maxTotalSize,omitempty"`
@@ -75,6 +79,8 @@ type CheckpointRestoreOperatorStatus struct {
 
 //+kubebuilder:object:root=true
 //+kubebuilder:subresource:status
+//+kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
+//+kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch
 
 // CheckpointRestoreOperator is the Schema for the checkpointrestoreoperators API
 type CheckpointRestoreOperator struct {

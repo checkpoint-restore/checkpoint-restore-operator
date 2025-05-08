@@ -62,6 +62,8 @@ spec:
                       type: string
                     pod:
                       type: string
+                    retainOrphan:
+                      type: boolean
                   type: object
                 type: array
               globalPolicy:
@@ -80,6 +82,8 @@ spec:
                     type: integer
                   maxTotalSizePerPod:
                     type: integer
+                  retainOrphan:
+                    type: boolean
                 type: object
               namespacePolicies:
                 items:
@@ -92,6 +96,8 @@ spec:
                       type: integer
                     namespace:
                       type: string
+                    retainOrphan:
+                      type: boolean
                   type: object
                 type: array
               podPolicies:
@@ -107,6 +113,8 @@ spec:
                       type: string
                     pod:
                       type: string
+                    retainOrphan:
+                      type: boolean
                   type: object
                 type: array
             type: object
