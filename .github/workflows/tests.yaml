@@ -99,3 +99,9 @@ jobs:
 
       - name: Test Max Checkpoints Set to 1
         run: sudo -E bats -f "test_max_checkpoints_set_to_1" ./test/run_tests.bats
+
+      - name: Test Max Total Checkpoint Size
+        run: sudo -E bats -f "test_max_total_checkpoint_size" ./test/run_tests.bats
+
+      - name: Test Max Checkpoint Size
+        run: sudo -E bats -f "test_max_checkpoint_size" ./test/run_tests.bats
