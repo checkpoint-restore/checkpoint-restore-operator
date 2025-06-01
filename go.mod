@@ -8,7 +8,7 @@ require (
 	github.com/checkpoint-restore/checkpointctl v1.3.0
 	github.com/containers/storage v1.58.0
 	github.com/fsnotify/fsnotify v1.9.0
-	github.com/go-logr/logr v1.4.2
+	github.com/go-logr/logr v1.4.3
 	github.com/onsi/ginkgo/v2 v2.23.4
 	github.com/onsi/gomega v1.37.0
 	k8s.io/api v0.33.1
