@@ -331,6 +331,15 @@ func getCheckpointArchiveInformation(log logr.Logger, checkpointPath string) (*c
 	if err != nil {
 		return nil, err
 	}
+
+	if dumpSpec.Annotations["io.kubernetes.cri.sandbox-namespace"] != "" {
+		return &checkpointDetails{
+			namespace: dumpSpec.Annotations["io.kubernetes.cri.sandbox-namespace"],
+			pod:       dumpSpec.Annotations["io.kubernetes.cri.sandbox-name"],
+			container: dumpSpec.Annotations["io.kubernetes.cri.container-name"],
+		}, nil
+	}
+
 	labels := make(map[string]string)
 
 	if err := json.Unmarshal([]byte(dumpSpec.Annotations["io.kubernetes.cri-o.Labels"]), &labels); err != nil {
