@@ -27,6 +27,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
+//+kubebuilder:rbac:groups=criu.org,resources=checkpointschedules,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=criu.org,resources=checkpointschedules/status,verbs=get;update;patch
+//+kubebuilder:rbac:groups=criu.org,resources=checkpointschedules/finalizers,verbs=update
+
 type CheckpointScheduleReconciler struct {
 	client.Client
 	Scheme     *runtime.Scheme

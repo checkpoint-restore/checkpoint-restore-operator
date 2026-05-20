@@ -333,7 +333,11 @@ func getCheckpointArchiveInformation(log logr.Logger, checkpointPath string) (*c
 	}
 	labels := make(map[string]string)
 
-	if err := json.Unmarshal([]byte(dumpSpec.Annotations["io.kubernetes.cri-o.Labels"]), &labels); err != nil {
+	rawLabels := dumpSpec.Annotations["io.kubernetes.cri-o.Labels"]
+	if rawLabels == "" {
+		return nil, fmt.Errorf("failed to read %q: annotation is empty, archive may still be written", "io.kubernetes.cri-o.Labels")
+	}
+	if err := json.Unmarshal([]byte(rawLabels), &labels); err != nil {
 		return nil, fmt.Errorf("failed to read %q: %w", "io.kubernetes.cri-o.Labels", err)
 	}
 
@@ -863,8 +867,9 @@ func (gc *garbageCollector) runGarbageCollector() {
 	// This is based on that example code.
 
 	var (
-		// Wait 100ms for new events; each new event resets the timer.
-		waitFor = 100 * time.Millisecond
+		// Wait 1s for new events; each new event resets the timer.
+		// 100ms was too short for large checkpoint archives still being written.
+		waitFor = 1 * time.Second
 
 		// Keep track of the timers, as path → timer.
 		mu     sync.Mutex
