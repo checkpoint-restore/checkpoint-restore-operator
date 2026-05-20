@@ -59,12 +59,14 @@ func filterContainers(pod corev1.Pod, containerNames []string) []corev1.Containe
 
 	var result []corev1.Container
 
+	nameSet := make(map[string]bool)
+	for _, name := range containerNames {
+		nameSet[name] = true
+	}
+
 	for _, container := range pod.Spec.Containers {
-		for _, name := range containerNames {
-			if container.Name == name {
-				result = append(result, container)
-				break
-			}
+		if nameSet[container.Name] {
+			result = append(result, container)
 		}
 	}
 

@@ -17,6 +17,7 @@ package controller
 
 import (
 	"context"
+	"sync"
 
 	v1 "github.com/checkpoint-restore/checkpoint-restore-operator/api/v1"
 	"github.com/robfig/cron/v3"
@@ -50,15 +51,29 @@ func (st *ScheduleTrigger) Start(ctx context.Context) error {
 			return
 		}
 
+		containerSet := make(map[string]struct{}, len(st.schedule.Spec.ContainerNames))
+		for _, name := range st.schedule.Spec.ContainerNames {
+			containerSet[name] = struct{}{}
+		}
+
+		var wg sync.WaitGroup
 		for _, pod := range pods {
-			containers := filterContainers(pod, st.schedule.Spec.ContainerNames)
-			for _, container := range containers {
-				err := st.creator.createCheckpoint(ctx, pod.Namespace, pod.Name, container.Name, pod.Spec.NodeName)
-				if err != nil {
-					logger.Error(err, "failed to create checkpoint", "pod", pod.Name, "container", container.Name)
+			for _, c := range pod.Spec.Containers {
+				if len(containerSet) > 0 {
+					if _, ok := containerSet[c.Name]; !ok {
+						continue
+					}
 				}
+				wg.Add(1)
+				go func(ns, podName, containerName, nodeName string) {
+					defer wg.Done()
+					if err := st.creator.createCheckpoint(ctx, ns, podName, containerName, nodeName); err != nil {
+						logger.Error(err, "failed to create checkpoint", "pod", podName, "container", containerName)
+					}
+				}(pod.Namespace, pod.Name, c.Name, pod.Spec.NodeName)
 			}
 		}
+		wg.Wait()
 	})
 	if err != nil {
 		return err
