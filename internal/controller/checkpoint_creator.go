@@ -25,6 +25,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
+type Checkpointer interface {
+	createCheckpoint(ctx context.Context, ns, podName, containerName, nodeName string) error
+}
+
 type CheckpointCreator struct {
 	client     client.Client
 	restConfig *rest.Config

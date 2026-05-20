@@ -27,12 +27,12 @@ import (
 
 type ScheduleTrigger struct {
 	scheduler *cron.Cron
-	creator   *CheckpointCreator
+	creator   Checkpointer
 	client    client.Client
 	schedule  *v1.CheckpointSchedule
 }
 
-func NewScheduleTrigger(c client.Client, creator *CheckpointCreator, schedule *v1.CheckpointSchedule) *ScheduleTrigger {
+func NewScheduleTrigger(c client.Client, creator Checkpointer, schedule *v1.CheckpointSchedule) *ScheduleTrigger {
 	return &ScheduleTrigger{
 		scheduler: cron.New(),
 		creator:   creator,
@@ -45,35 +45,7 @@ func (st *ScheduleTrigger) Start(ctx context.Context) error {
 	logger := log.FromContext(ctx)
 
 	_, err := st.scheduler.AddFunc(st.schedule.Spec.Triggers.Schedule, func() {
-		pods, err := getMatchingPods(ctx, st.client, st.schedule.Spec.Namespace, &st.schedule.Spec.Selector)
-		if err != nil {
-			logger.Error(err, "failed to get matching pods")
-			return
-		}
-
-		containerSet := make(map[string]struct{}, len(st.schedule.Spec.ContainerNames))
-		for _, name := range st.schedule.Spec.ContainerNames {
-			containerSet[name] = struct{}{}
-		}
-
-		var wg sync.WaitGroup
-		for _, pod := range pods {
-			for _, c := range pod.Spec.Containers {
-				if len(containerSet) > 0 {
-					if _, ok := containerSet[c.Name]; !ok {
-						continue
-					}
-				}
-				wg.Add(1)
-				go func(ns, podName, containerName, nodeName string) {
-					defer wg.Done()
-					if err := st.creator.createCheckpoint(ctx, ns, podName, containerName, nodeName); err != nil {
-						logger.Error(err, "failed to create checkpoint", "pod", podName, "container", containerName)
-					}
-				}(pod.Namespace, pod.Name, c.Name, pod.Spec.NodeName)
-			}
-		}
-		wg.Wait()
+		st.runCheckpoints(ctx)
 	})
 	if err != nil {
 		return err
@@ -86,4 +58,38 @@ func (st *ScheduleTrigger) Start(ctx context.Context) error {
 
 func (st *ScheduleTrigger) Stop() {
 	st.scheduler.Stop()
+}
+
+func (st *ScheduleTrigger) runCheckpoints(ctx context.Context) {
+	logger := log.FromContext(ctx)
+
+	pods, err := getMatchingPods(ctx, st.client, st.schedule.Spec.Namespace, &st.schedule.Spec.Selector)
+	if err != nil {
+		logger.Error(err, "failed to get matching pods")
+		return
+	}
+
+	containerSet := make(map[string]struct{}, len(st.schedule.Spec.ContainerNames))
+	for _, name := range st.schedule.Spec.ContainerNames {
+		containerSet[name] = struct{}{}
+	}
+
+	var wg sync.WaitGroup
+	for _, pod := range pods {
+		for _, c := range pod.Spec.Containers {
+			if len(containerSet) > 0 {
+				if _, ok := containerSet[c.Name]; !ok {
+					continue
+				}
+			}
+			wg.Add(1)
+			go func(ns, podName, containerName, nodeName string) {
+				defer wg.Done()
+				if err := st.creator.createCheckpoint(ctx, ns, podName, containerName, nodeName); err != nil {
+					logger.Error(err, "failed to create checkpoint", "pod", podName, "container", containerName)
+				}
+			}(pod.Namespace, pod.Name, c.Name, pod.Spec.NodeName)
+		}
+	}
+	wg.Wait()
 }
