@@ -46,3 +46,36 @@ rules:
   - get
   - patch
   - update
+- apiGroups:
+  - criu.org
+  resources:
+  - checkpointschedules
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - patch
+  - delete
+- apiGroups:
+  - criu.org
+  resources:
+  - checkpointschedules/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - criu.org
+  resources:
+  - checkpointschedules/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - ""
+  resources:
+  - nodes/proxy
+  verbs:
+  - get
+  - create
