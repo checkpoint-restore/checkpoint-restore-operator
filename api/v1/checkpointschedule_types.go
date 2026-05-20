@@ -38,10 +38,10 @@ type CheckpointScheduleSpec struct {
 }
 
 type TriggersSpec struct {
-	Schedule           string                `json:"schedule,omitempty"`
+	Schedule           string                 `json:"schedule,omitempty"`
 	ResourceThreshold  *ResourceThresholdSpec `json:"resourceThreshold,omitempty"`
-	OnKubernetesEvents []string              `json:"onKubernetesEvents,omitempty"`
-	OnAnnotation       bool                  `json:"onAnnotation,omitempty"`
+	OnKubernetesEvents []string               `json:"onKubernetesEvents,omitempty"`
+	OnAnnotation       bool                   `json:"onAnnotation,omitempty"`
 }
 
 type ResourceThresholdSpec struct {
