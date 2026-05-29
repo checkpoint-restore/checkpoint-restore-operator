@@ -236,7 +236,7 @@ func UntarFiles(src, dest string, files []string) error {
 	if err != nil {
 		return err
 	}
-	defer archiveFile.Close()
+	defer func() { _ = archiveFile.Close() }()
 
 	if err := iterateTarArchive(src, func(r *tar.Reader, header *tar.Header) error {
 		// Check if the current entry is one of the target files
@@ -251,7 +251,7 @@ func UntarFiles(src, dest string, files []string) error {
 				if err != nil {
 					return err
 				}
-				defer destFile.Close()
+				defer func() { _ = destFile.Close() }()
 
 				// Copy the contents of the entry to the destination file
 				_, err = io.Copy(destFile, r)
@@ -279,14 +279,14 @@ func iterateTarArchive(archiveInput string, callback func(r *tar.Reader, header 
 	if err != nil {
 		return err
 	}
-	defer archiveFile.Close()
+	defer func() { _ = archiveFile.Close() }()
 
 	// Decompress the archive
 	stream, err := archive.DecompressStream(archiveFile)
 	if err != nil {
 		return err
 	}
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	// Create a tar reader to read the files from the decompressed archive
 	tarReader := tar.NewReader(stream)
@@ -319,7 +319,7 @@ func getCheckpointArchiveInformation(log logr.Logger, checkpointPath string) (*c
 	if err != nil {
 		return nil, err
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	filesToExtract := []string{"spec.dump"}
 	if err := UntarFiles(checkpointPath, tempDir, filesToExtract); err != nil {
@@ -882,7 +882,7 @@ func (gc *garbageCollector) runGarbageCollector() {
 	if err != nil {
 		log.Error(err, "runGarbageCollector()")
 	}
-	defer watcher.Close()
+	defer func() { _ = watcher.Close() }()
 
 	c := make(chan struct{})
 
