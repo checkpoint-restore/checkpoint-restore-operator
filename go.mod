@@ -2,7 +2,7 @@ module github.com/checkpoint-restore/checkpoint-restore-operator
 
 go 1.24.0
 
-toolchain go1.24.2
+toolchain go1.26.3
 
 require (
 	github.com/checkpoint-restore/checkpointctl v1.3.0
