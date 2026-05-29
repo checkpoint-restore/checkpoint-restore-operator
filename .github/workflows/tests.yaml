@@ -78,6 +78,7 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           push: true
+          provenance: false
           tags: localhost:5000/checkpoint-restore-operator:ci
 
       - name: Deploy to Kubernetes
