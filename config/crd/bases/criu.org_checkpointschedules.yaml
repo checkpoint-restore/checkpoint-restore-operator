@@ -107,9 +107,23 @@ spec:
                   resourceThreshold:
                     properties:
                       cpuPercent:
-                        type: integer
+                        description: ResourcePercentThreshold defines upper and lower
+                          percentage bounds for a resource.
+                        properties:
+                          lower:
+                            type: integer
+                          upper:
+                            type: integer
+                        type: object
                       memoryPercent:
-                        type: integer
+                        description: ResourcePercentThreshold defines upper and lower
+                          percentage bounds for a resource.
+                        properties:
+                          lower:
+                            type: integer
+                          upper:
+                            type: integer
+                        type: object
                       pollIntervalSeconds:
                         type: integer
                     type: object

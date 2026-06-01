@@ -1,0 +1,21 @@
+apiVersion: criu.org/v1
+kind: CheckpointSchedule
+metadata:
+  name: myapp-protection
+  namespace: default
+spec:
+  namespace: default
+  selector:
+    matchLabels:
+      app: myapp
+  containerNames: []   # empty = all containers
+  intent: ResourcePressure
+  triggers:
+    resourceThreshold:
+      memoryPercent:
+        upper: 80      # checkpoint when memory > 80% of limit
+        lower: 25      # checkpoint when memory < 25% of limit
+      cpuPercent:
+        upper: 90      # checkpoint when CPU > 90% of limit
+        lower: 5       # checkpoint when CPU < 5% of limit
+      pollIntervalSeconds: 30

@@ -44,10 +44,16 @@ type TriggersSpec struct {
 	OnAnnotation       bool                   `json:"onAnnotation,omitempty"`
 }
 
+// ResourcePercentThreshold defines upper and lower percentage bounds for a resource.
+type ResourcePercentThreshold struct {
+	Upper *int `json:"upper,omitempty"`
+	Lower *int `json:"lower,omitempty"`
+}
+
 type ResourceThresholdSpec struct {
-	CPUPercent          *int `json:"cpuPercent,omitempty"`
-	MemoryPercent       *int `json:"memoryPercent,omitempty"`
-	PollIntervalSeconds *int `json:"pollIntervalSeconds,omitempty"`
+	CPUPercent          *ResourcePercentThreshold `json:"cpuPercent,omitempty"`
+	MemoryPercent       *ResourcePercentThreshold `json:"memoryPercent,omitempty"`
+	PollIntervalSeconds *int                      `json:"pollIntervalSeconds,omitempty"`
 }
 
 // CheckpointScheduleStatus defines the observed state of CheckpointSchedule
