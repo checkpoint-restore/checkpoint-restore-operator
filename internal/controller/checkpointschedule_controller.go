@@ -36,6 +36,7 @@ import (
 //+kubebuilder:rbac:groups=criu.org,resources=checkpointschedules/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=criu.org,resources=checkpointschedules/finalizers,verbs=update
 //+kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;patch
+//+kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
 //+kubebuilder:rbac:groups="",resources=nodes/proxy,verbs=get;create
 //+kubebuilder:rbac:groups=metrics.k8s.io,resources=pods,verbs=get;list
 
@@ -118,6 +119,12 @@ func (r *CheckpointScheduleReconciler) Reconcile(
 
 		if schedule.Spec.Triggers.ResourceThreshold != nil {
 			t := NewResourceTrigger(r.Client, r.RestConfig, creator, schedule)
+			t.Start(ctx)
+			triggers = append(triggers, t)
+		}
+
+		if len(schedule.Spec.Triggers.OnKubernetesEvents) > 0 {
+			t := NewEventTrigger(r.Client, creator, schedule)
 			t.Start(ctx)
 			triggers = append(triggers, t)
 		}

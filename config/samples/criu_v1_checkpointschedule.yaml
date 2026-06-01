@@ -26,3 +26,9 @@ spec:
       cpuPercent:
         upper: 90      # checkpoint when CPU > 90% of limit
       pollIntervalSeconds: 30
+    # Checkpoint pods just before a disruption: the node is drained, the
+    # pod is evicted, or the pod is preempted (Kubernetes 1.26+).
+    onKubernetesEvents:
+      - NodeDrain
+      - PodEviction
+      - Preemption
