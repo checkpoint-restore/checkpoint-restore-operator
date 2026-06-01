@@ -24,7 +24,7 @@ type CheckpointIntent string
 
 const (
 	Backup           CheckpointIntent = "Backup"
-	PreEviction      CheckpointIntent = "PreEviction"
+	PodDisruption    CheckpointIntent = "PodDisruption"
 	ResourcePressure CheckpointIntent = "ResourcePressure"
 	Manual           CheckpointIntent = "Manual"
 )
