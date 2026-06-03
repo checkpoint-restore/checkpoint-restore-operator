@@ -7,6 +7,24 @@ on:
     branches: [main]
 
 jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: "go.mod"
+
+      - name: Install envtest binaries
+        run: |
+          go install sigs.k8s.io/controller-runtime/tools/setup-envtest@release-0.18
+          echo "KUBEBUILDER_ASSETS=$(setup-envtest use 1.27.1 -p path)" >> "$GITHUB_ENV"
+
+      - name: Run unit tests
+        run: go test -race -coverprofile=cover.out ./...
+
   build-and-deploy:
     runs-on: ubuntu-latest
     services:
