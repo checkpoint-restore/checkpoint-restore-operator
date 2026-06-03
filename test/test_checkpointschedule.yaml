@@ -1,0 +1,13 @@
+apiVersion: criu.org/v1
+kind: CheckpointSchedule
+metadata:
+  name: schedule-test
+  namespace: default
+spec:
+  namespace: default
+  selector:
+    matchLabels:
+      app: schedule-test
+  triggers:
+    interval: 5s
+    onAnnotation: true
