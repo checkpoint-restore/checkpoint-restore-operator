@@ -8,7 +8,6 @@ rules:
   - ""
   resources:
   - namespaces
-  - pods
   verbs:
   - get
   - list
@@ -20,6 +19,15 @@ rules:
   verbs:
   - create
   - get
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  verbs:
+  - get
+  - list
+  - patch
+  - watch
 - apiGroups:
   - criu.org
   resources:

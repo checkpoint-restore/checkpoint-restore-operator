@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	v1 "github.com/checkpoint-restore/checkpoint-restore-operator/api/v1"
@@ -27,13 +28,21 @@ import (
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 //+kubebuilder:rbac:groups=criu.org,resources=checkpointschedules,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=criu.org,resources=checkpointschedules/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=criu.org,resources=checkpointschedules/finalizers,verbs=update
+//+kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;patch
 //+kubebuilder:rbac:groups="",resources=nodes/proxy,verbs=get;create
+
+const checkpointScheduleFinalizer = "criu.org/checkpoint-schedule-finalizer"
+
+type Stoppable interface {
+	Stop()
+}
 
 type CheckpointScheduleReconciler struct {
 	client.Client
@@ -42,7 +51,9 @@ type CheckpointScheduleReconciler struct {
 	RestConfig *rest.Config
 	// Checkpointer overrides the default kubelet-proxy checkpoint creator;
 	// used by tests.
-	Checkpointer Checkpointer
+	Checkpointer   Checkpointer
+	activeTriggers map[string][]Stoppable
+	mu             sync.Mutex
 }
 
 func (r *CheckpointScheduleReconciler) checkpointer() Checkpointer {
@@ -63,13 +74,56 @@ func (r *CheckpointScheduleReconciler) Reconcile(
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
+	key := req.String()
+
+	// CR is being deleted - stop triggers and remove finalizer
 	if !schedule.DeletionTimestamp.IsZero() {
+		r.stopTriggers(key)
+		if controllerutil.ContainsFinalizer(schedule, checkpointScheduleFinalizer) {
+			controllerutil.RemoveFinalizer(schedule, checkpointScheduleFinalizer)
+			if err := r.Update(ctx, schedule); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
+		return ctrl.Result{}, nil
+	}
+
+	// add finalizer if not present
+	if !controllerutil.ContainsFinalizer(schedule, checkpointScheduleFinalizer) {
+		controllerutil.AddFinalizer(schedule, checkpointScheduleFinalizer)
+		if err := r.Update(ctx, schedule); err != nil {
+			return ctrl.Result{}, err
+		}
 		return ctrl.Result{}, nil
 	}
 
 	logger.Info("reconciling", "name", schedule.Name)
 
-	return r.reconcileInterval(ctx, r.checkpointer(), schedule)
+	creator := r.checkpointer()
+
+	// start the poll-based triggers once; periodic checkpoints below are
+	// driven by the reconcile loop itself and need no goroutine
+	r.mu.Lock()
+	_, running := r.activeTriggers[key]
+	r.mu.Unlock()
+	if !running {
+		var triggers []Stoppable
+
+		if schedule.Spec.Triggers.OnAnnotation {
+			t := NewAnnotationTrigger(r.Client, creator, schedule)
+			t.Start(ctx)
+			triggers = append(triggers, t)
+		}
+
+		r.mu.Lock()
+		if r.activeTriggers == nil {
+			r.activeTriggers = make(map[string][]Stoppable)
+		}
+		r.activeTriggers[key] = triggers
+		r.mu.Unlock()
+	}
+
+	return r.reconcileInterval(ctx, creator, schedule)
 }
 
 // reconcileInterval takes the periodic checkpoints driven by
@@ -114,6 +168,15 @@ func (r *CheckpointScheduleReconciler) reconcileInterval(
 	}
 
 	return ctrl.Result{RequeueAfter: interval}, nil
+}
+
+func (r *CheckpointScheduleReconciler) stopTriggers(key string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, t := range r.activeTriggers[key] {
+		t.Stop()
+	}
+	delete(r.activeTriggers, key)
 }
 
 func (r *CheckpointScheduleReconciler) SetupWithManager(mgr ctrl.Manager) error {
