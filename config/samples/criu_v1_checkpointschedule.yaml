@@ -1,0 +1,28 @@
+apiVersion: criu.org/v1
+kind: CheckpointSchedule
+metadata:
+  name: myapp-checkpoints
+  namespace: default
+spec:
+  namespace: default
+  selector:
+    matchLabels:
+      app: myapp
+  containerNames: []   # empty = all containers
+  triggers:
+    # Checkpoint the matching pods every hour. The first checkpoint is
+    # taken one interval after this resource is created.
+    interval: 1h
+    # Checkpoint a pod on demand when it is annotated with
+    # checkpoint.criu.org/trigger=true. The annotation is removed after
+    # the checkpoint is taken.
+    onAnnotation: true
+    # Checkpoint a container when its resource usage crosses a percentage
+    # of its resource limit. Requires metrics-server. Containers without
+    # a resource limit are skipped.
+    resourceThreshold:
+      memoryPercent:
+        upper: 80      # checkpoint when memory > 80% of limit
+      cpuPercent:
+        upper: 90      # checkpoint when CPU > 90% of limit
+      pollIntervalSeconds: 30

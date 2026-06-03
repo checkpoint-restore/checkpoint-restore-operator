@@ -47,7 +47,7 @@ type TriggersSpec struct {
 	// +kubebuilder:validation:XValidation:rule="duration(self) >= duration('1s')",message="interval must be at least 1s"
 	Interval *metav1.Duration `json:"interval,omitempty"`
 	// ResourceThreshold checkpoints a container when its CPU or memory usage
-	// exceeds a configured percentage of its resource limit. Requires the
+	// crosses a configured percentage of its resource limit. Requires the
 	// Kubernetes Metrics API (metrics-server).
 	// +optional
 	ResourceThreshold *ResourceThresholdSpec `json:"resourceThreshold,omitempty"`
@@ -64,17 +64,29 @@ type TriggersSpec struct {
 	OnAnnotation bool `json:"onAnnotation,omitempty"`
 }
 
+// ResourcePercentThreshold defines upper and lower percentage bounds for a
+// resource, relative to the container's resource limit.
+type ResourcePercentThreshold struct {
+	// Upper triggers a checkpoint when usage exceeds this percentage of the
+	// container's limit.
+	// +optional
+	Upper *int `json:"upper,omitempty"`
+	// Lower triggers a checkpoint when usage drops below this percentage of
+	// the container's limit.
+	// +optional
+	Lower *int `json:"lower,omitempty"`
+}
+
 // ResourceThresholdSpec configures resource-usage based checkpointing.
 // Containers without a resource limit are skipped.
 type ResourceThresholdSpec struct {
-	// CPUPercent triggers a checkpoint when CPU usage exceeds this
-	// percentage of the container's limit.
+	// CPUPercent defines CPU usage bounds relative to the container's limit.
 	// +optional
-	CPUPercent *int `json:"cpuPercent,omitempty"`
-	// MemoryPercent triggers a checkpoint when memory usage exceeds this
-	// percentage of the container's limit.
+	CPUPercent *ResourcePercentThreshold `json:"cpuPercent,omitempty"`
+	// MemoryPercent defines memory usage bounds relative to the container's
+	// limit.
 	// +optional
-	MemoryPercent *int `json:"memoryPercent,omitempty"`
+	MemoryPercent *ResourcePercentThreshold `json:"memoryPercent,omitempty"`
 	// PollIntervalSeconds is the number of seconds between metrics polls.
 	// Defaults to 30.
 	// +optional

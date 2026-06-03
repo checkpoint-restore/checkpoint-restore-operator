@@ -133,19 +133,40 @@ spec:
                   resourceThreshold:
                     description: |-
                       ResourceThreshold checkpoints a container when its CPU or memory usage
-                      exceeds a configured percentage of its resource limit. Requires the
+                      crosses a configured percentage of its resource limit. Requires the
                       Kubernetes Metrics API (metrics-server).
                     properties:
                       cpuPercent:
-                        description: |-
-                          CPUPercent triggers a checkpoint when CPU usage exceeds this
-                          percentage of the container's limit.
-                        type: integer
+                        description: CPUPercent defines CPU usage bounds relative
+                          to the container's limit.
+                        properties:
+                          lower:
+                            description: |-
+                              Lower triggers a checkpoint when usage drops below this percentage of
+                              the container's limit.
+                            type: integer
+                          upper:
+                            description: |-
+                              Upper triggers a checkpoint when usage exceeds this percentage of the
+                              container's limit.
+                            type: integer
+                        type: object
                       memoryPercent:
                         description: |-
-                          MemoryPercent triggers a checkpoint when memory usage exceeds this
-                          percentage of the container's limit.
-                        type: integer
+                          MemoryPercent defines memory usage bounds relative to the container's
+                          limit.
+                        properties:
+                          lower:
+                            description: |-
+                              Lower triggers a checkpoint when usage drops below this percentage of
+                              the container's limit.
+                            type: integer
+                          upper:
+                            description: |-
+                              Upper triggers a checkpoint when usage exceeds this percentage of the
+                              container's limit.
+                            type: integer
+                        type: object
                       pollIntervalSeconds:
                         description: |-
                           PollIntervalSeconds is the number of seconds between metrics polls.
