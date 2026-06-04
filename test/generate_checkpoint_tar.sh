@@ -27,7 +27,9 @@ create_checkpoint_tar() {
 }
 
 increment_timestamp() {
-	date -d "$1 + 1 second" +%Y-%m-%dT%H:%M:%S
+	# Use epoch arithmetic: "date -d '<ISO timestamp> + 1 second'" parses
+	# the "+ 1" as a +01:00 timezone offset instead of an increment.
+	date -d "@$(($(date -d "$1" +%s) + 1))" +%Y-%m-%dT%H:%M:%S
 }
 
 generate_large_file() {
