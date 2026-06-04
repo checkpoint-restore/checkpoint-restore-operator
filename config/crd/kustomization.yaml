@@ -3,6 +3,7 @@
 # It should be run by config/default
 resources:
 - bases/criu.org_checkpointrestoreoperators.yaml
+- bases/criu.org_checkpointschedules.yaml
 #+kubebuilder:scaffold:crdkustomizeresource
 
 patches:

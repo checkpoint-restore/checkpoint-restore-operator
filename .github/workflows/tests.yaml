@@ -7,6 +7,24 @@ on:
     branches: [main]
 
 jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: "go.mod"
+
+      - name: Install envtest binaries
+        run: |
+          go install sigs.k8s.io/controller-runtime/tools/setup-envtest@release-0.18
+          echo "KUBEBUILDER_ASSETS=$(setup-envtest use 1.27.1 -p path)" >> "$GITHUB_ENV"
+
+      - name: Run unit tests
+        run: go test -race -coverprofile=cover.out ./...
+
   build-and-deploy:
     runs-on: ubuntu-latest
     services:
@@ -63,6 +81,13 @@ jobs:
           kind create cluster --config=./test/kind-config.yaml
           kind export kubeconfig
 
+      - name: Install metrics-server
+        run: |
+          kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+          kubectl patch -n kube-system deployment metrics-server --type=json \
+            -p '[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]'
+          kubectl rollout status -n kube-system deployment/metrics-server --timeout=180s
+
       - name: Connect the registry to the Kind network
         id: connect-registry
         run: |
@@ -109,3 +134,21 @@ jobs:
 
       - name: Test orphan retention
         run: sudo -E bats -f "test_orphan_retention_policy" ./test/run_tests.bats
+
+      - name: Test CheckpointSchedule validation
+        run: sudo -E bats -f "test_checkpointschedule_validation" ./test/run_tests.bats
+
+      - name: Test CheckpointSchedule interval trigger
+        run: sudo -E bats -f "test_checkpointschedule_interval_status" ./test/run_tests.bats
+
+      - name: Test CheckpointSchedule annotation trigger
+        run: sudo -E bats -f "test_checkpointschedule_annotation" ./test/run_tests.bats
+
+      - name: Test CheckpointSchedule deletion
+        run: sudo -E bats -f "test_checkpointschedule_deletion" ./test/run_tests.bats
+
+      - name: Test CheckpointSchedule resource trigger
+        run: sudo -E bats -f "test_checkpointschedule_resource_trigger" ./test/run_tests.bats
+
+      - name: Test CheckpointSchedule event trigger
+        run: sudo -E bats -f "test_checkpointschedule_event_trigger" ./test/run_tests.bats

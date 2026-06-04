@@ -8,15 +8,32 @@ rules:
   - ""
   resources:
   - namespaces
-  - pods
+  - nodes
   verbs:
   - get
   - list
   - watch
 - apiGroups:
+  - ""
+  resources:
+  - nodes/proxy
+  verbs:
+  - create
+  - get
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  verbs:
+  - get
+  - list
+  - patch
+  - watch
+- apiGroups:
   - criu.org
   resources:
   - checkpointrestoreoperators
+  - checkpointschedules
   verbs:
   - create
   - delete
@@ -29,13 +46,22 @@ rules:
   - criu.org
   resources:
   - checkpointrestoreoperators/finalizers
+  - checkpointschedules/finalizers
   verbs:
   - update
 - apiGroups:
   - criu.org
   resources:
   - checkpointrestoreoperators/status
+  - checkpointschedules/status
   verbs:
   - get
   - patch
   - update
+- apiGroups:
+  - metrics.k8s.io
+  resources:
+  - pods
+  verbs:
+  - get
+  - list

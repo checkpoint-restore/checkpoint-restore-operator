@@ -1,0 +1,17 @@
+apiVersion: criu.org/v1
+kind: CheckpointSchedule
+metadata:
+  name: resource-test
+  namespace: default
+spec:
+  namespace: default
+  selector:
+    matchLabels:
+      app: resource-test
+  triggers:
+    resourceThreshold:
+      # the pause container is always idle, so the lower bound is crossed
+      # on the first metrics poll
+      cpuPercent:
+        lower: 50
+      pollIntervalSeconds: 10

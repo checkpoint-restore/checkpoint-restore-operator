@@ -35,6 +35,7 @@ jobs:
         uses: codespell-project/actions-codespell@v2
         with:
           skip: vendor,*.svg
+          ignore_words_list: notin
 
       - name: ShellCheck and shfmt
         run: |

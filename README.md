@@ -30,6 +30,88 @@ Defaults to kubelet's default checkpoint location `/var/lib/kubelet/checkpoints`
 A sample file can be found at `config/samples/_v1_checkpointrestoreoperator.yaml`
 for setting these parameters.
 
+## Automated Checkpointing
+
+In addition to managing existing checkpoint archives, the operator can create
+checkpoints automatically. The `CheckpointSchedule` custom resource selects a
+set of pods and describes what should initiate a checkpoint of their
+containers. A complete reference with examples for every trigger can be
+found in [docs/checkpoint-schedules.md](docs/checkpoint-schedules.md).
+
+### Prerequisites
+
+* Kubernetes 1.30 or newer (the `ContainerCheckpoint` feature gate is enabled
+by default since 1.30)
+* A container runtime with checkpoint support, for example CRI-O with
+`enable_criu_support = true` or containerd 2.x
+* [CRIU](https://criu.org) installed on every node
+* For resource-based triggers:
+[metrics-server](https://github.com/kubernetes-sigs/metrics-server)
+
+### Selecting Pods
+
+The spec selects pods by namespace and label selector, optionally restricted
+to named containers:
+
+```yaml
+apiVersion: criu.org/v1
+kind: CheckpointSchedule
+metadata:
+  name: myapp-checkpoints
+  namespace: default
+spec:
+  namespace: default
+  selector:
+    matchLabels:
+      app: myapp
+  containerNames: []   # empty = all containers
+  triggers:
+    interval: 12h
+```
+
+### Triggers
+
+Multiple triggers can be combined in a single `CheckpointSchedule`. All
+configured triggers are active at the same time and fire independently,
+sharing the same pod selection:
+
+* `interval`: checkpoint the matching pods periodically (e.g. `30s`, `15m`,
+`12h`). The first checkpoint is taken one interval after the resource is
+created, and the last checkpoint time is recorded in the resource status.
+* `onAnnotation`: checkpoint a matching pod on demand when it is annotated
+with `checkpoint.criu.org/trigger=true`. The annotation is removed after the
+checkpoint is taken:
+
+  ```sh
+  kubectl annotate pod <pod> checkpoint.criu.org/trigger=true
+  ```
+
+* `resourceThreshold`: checkpoint a container when its CPU or memory usage
+crosses a percentage of its resource limit. Both an `upper` and a `lower`
+bound can be set per resource; containers without a limit are skipped.
+* `onKubernetesEvents`: checkpoint pods just before a disruption. Supported
+events are `NodeDrain` (the pod's node is marked unschedulable),
+`PodEviction` (the pod is being deleted) and `Preemption` (the pod has the
+`DisruptionTarget` condition, Kubernetes 1.26 or newer).
+
+A sample using all four triggers can be found at
+`config/samples/criu_v1_checkpointschedule.yaml`. The field documentation is
+also available from the cluster with `kubectl explain
+checkpointschedule.spec`.
+
+### Observing
+
+The resource status records the activity of the interval trigger:
+
+```sh
+kubectl get checkpointschedule myapp-checkpoints -o yaml
+```
+
+Checkpoint archives are written by the kubelet to
+`/var/lib/kubelet/checkpoints` on the node running the checkpointed pod, and
+are subject to the retention policy configured with the
+`CheckpointRestoreOperator` resource described above.
+
 ## Getting Started
 
 You’ll need a Kubernetes cluster to run against. You can use
@@ -115,7 +197,8 @@ otherwise have the right to pass it on as an open-source patch.
    make install
    ```
 
-2. Run your controller (this will run in the foreground, so switch to a new terminal if you want to leave it running):
+2. Run your controller (this will run in the foreground, so switch to a new
+   terminal if you want to leave it running):
 
    ```sh
    make run
@@ -125,7 +208,8 @@ otherwise have the right to pass it on as an open-source patch.
 
 ### Modifying the API Definitions
 
-If you are editing the API definitions, generate the manifests such as CRs or CRDs using:
+If you are editing the API definitions, generate the manifests such as CRs or
+CRDs using:
 
 ```sh
 make manifests
