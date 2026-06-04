@@ -15,8 +15,22 @@ function log_and_run() {
   return $status
 }
 
+function setup() {
+  TEST_TMPDIR=$(mktemp -d)
+}
+
 function teardown() {
   log_and_run sudo rm -rf "${CHECKPOINT_DIR:?}"/*
+  rm -rf "$TEST_TMPDIR"
+}
+
+# Copy a config to a temp location before modifying it with sed so that
+# git-tracked test fixtures are never mutated in place.
+function copy_config() {
+  local src=$1
+  local dst="$TEST_TMPDIR/$(basename "$src")"
+  cp "$src" "$dst"
+  echo "$dst"
 }
 
 # operator_logs prints the operator log; OPERATOR_LOG_CMD can override the
@@ -41,11 +55,12 @@ function operator_logs() {
 }
 
 @test "test_max_checkpoints_set_to_0" {
-  log_and_run sed -i 's/maxCheckpointsPerContainer: [0-9]*/maxCheckpointsPerContainer: 0/' ./test/test_byCount_checkpointrestoreoperator.yaml
+  config=$(copy_config ./test/test_byCount_checkpointrestoreoperator.yaml)
+  log_and_run sed -i 's/maxCheckpointsPerContainer: [0-9]*/maxCheckpointsPerContainer: 0/' "$config"
   [ "$status" -eq 0 ]
-  log_and_run sed -i '/^  containerPolicies:/,/maxCheckpoints: [0-9]*/ s/^/#/' ./test/test_byCount_checkpointrestoreoperator.yaml
+  log_and_run sed -i '/^  containerPolicies:/,/maxCheckpoints: [0-9]*/ s/^/#/' "$config"
   [ "$status" -eq 0 ]
-  log_and_run kubectl apply -f ./test/test_byCount_checkpointrestoreoperator.yaml
+  log_and_run kubectl apply -f "$config"
   [ "$status" -eq 0 ]
   log_and_run ./test/generate_checkpoint_tar.sh
   [ "$status" -eq 0 ]
@@ -57,9 +72,12 @@ function operator_logs() {
 }
 
 @test "test_max_checkpoints_set_to_1" {
-  log_and_run sed -i 's/maxCheckpointsPerContainer: [0-9]*/maxCheckpointsPerContainer: 1/' ./test/test_byCount_checkpointrestoreoperator.yaml
+  config=$(copy_config ./test/test_byCount_checkpointrestoreoperator.yaml)
+  log_and_run sed -i 's/maxCheckpointsPerContainer: [0-9]*/maxCheckpointsPerContainer: 1/' "$config"
   [ "$status" -eq 0 ]
-  log_and_run kubectl apply -f ./test/test_byCount_checkpointrestoreoperator.yaml
+  log_and_run sed -i '/^  containerPolicies:/,/maxCheckpoints: [0-9]*/ s/^/#/' "$config"
+  [ "$status" -eq 0 ]
+  log_and_run kubectl apply -f "$config"
   [ "$status" -eq 0 ]
   log_and_run ./test/generate_checkpoint_tar.sh
   [ "$status" -eq 0 ]
@@ -81,9 +99,10 @@ function operator_logs() {
 }
 
 @test "test_max_checkpoint_size" {
-  log_and_run sed -i '/^  containerPolicies:/,/maxTotalSize: [0-9]*/ s/^/#/' ./test/test_bySize_checkpointrestoreoperator.yaml
+  config=$(copy_config ./test/test_bySize_checkpointrestoreoperator.yaml)
+  log_and_run sed -i '/^  containerPolicies:/,/maxTotalSize: [0-9]*/ s/^/#/' "$config"
   [ "$status" -eq 0 ]
-  log_and_run kubectl apply -f ./test/test_bySize_checkpointrestoreoperator.yaml
+  log_and_run kubectl apply -f "$config"
   [ "$status" -eq 0 ]
   log_and_run ./test/generate_checkpoint_tar.sh large
   [ "$status" -eq 0 ]
