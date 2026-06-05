@@ -87,25 +87,26 @@ func (r *ForensicSnapshotChainReconciler) Reconcile(ctx context.Context, req ctr
 			return ctrl.Result{}, err
 		}
 
-		log.Info(
-			"Found matching pods for ForensicSnapshotChain",
-			"count", len(pods),
-		)
-
 		//logic for container selection
 		for _, pod := range pods {
-			containers := filterContainers(
-				pod,
-				chain.Spec.ContainerNames,
-			)
 
 			log.Info(
-				"Selected containers for ForensicSnapshotChain",
+				"Resolved pod placement",
 				"pod", pod.Name,
-				"containers", len(containers),
+				"node", pod.Spec.NodeName,
 			)
 
+			containers := filterContainers(
+				pod, chain.Spec.ContainerNames,
+			)
+
+			for _, container := range containers {
+
+				log.Info("Creating checkpoint for ", "pod", pod.Name, "container", container.Name, "node", pod.Spec.NodeName)
+			}
+
 		}
+
 	}
 
 	return ctrl.Result{}, nil
