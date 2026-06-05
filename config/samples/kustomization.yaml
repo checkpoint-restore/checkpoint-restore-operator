@@ -2,4 +2,5 @@
 resources:
 - _v1_checkpointrestoreoperator.yaml
 - criu_v1_checkpointschedule.yaml
+- v1_forensicsnapshotchain.yaml
 #+kubebuilder:scaffold:manifestskustomizesamples

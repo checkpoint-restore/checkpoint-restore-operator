@@ -1,0 +1,18 @@
+apiVersion: criu.org/v1
+kind: ForensicSnapshotChain
+metadata:
+  name: forensicsnapshotchain-sample
+spec:
+  namespace: default
+
+  selector:
+    matchLabels:
+      app: nginx
+
+  capture:
+    interval: 5s
+    maxSnapshots: 5
+    maxDuration: 1m
+
+  integrity:
+    hashAlgorithm: sha256
