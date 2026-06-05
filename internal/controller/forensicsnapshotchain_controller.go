@@ -92,8 +92,22 @@ func (r *ForensicSnapshotChainReconciler) Reconcile(ctx context.Context, req ctr
 			"count", len(pods),
 		)
 
-		return ctrl.Result{}, nil
+		//logic for container selection
+		for _, pod := range pods {
+			containers := filterContainers(
+				pod,
+				chain.Spec.ContainerNames,
+			)
+
+			log.Info(
+				"Selected containers for ForensicSnapshotChain",
+				"pod", pod.Name,
+				"containers", len(containers),
+			)
+
+		}
 	}
+
 	return ctrl.Result{}, nil
 }
 
