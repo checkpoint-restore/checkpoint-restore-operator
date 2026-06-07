@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -71,13 +72,16 @@ func (r *ForensicSnapshotChainReconciler) Reconcile(ctx context.Context, req ctr
 	if chain.Status.Phase == criuorgv1.SnapshotChainPhase("") {
 		chain.Status.Phase = criuorgv1.PhasePending
 
+		//to record start time of the snapshot chain
+		now := metav1.Now()
+		chain.Status.StartTime = &now
+
 		if err := r.Status().Update(ctx, chain); err != nil {
 			return ctrl.Result{}, err
 		}
 
 		return ctrl.Result{Requeue: true}, nil
 	}
-
 
 	// If the phase is pending, we need to start the snapshot chain
 	if chain.Status.Phase == criuorgv1.PhasePending {
@@ -123,22 +127,33 @@ func (r *ForensicSnapshotChainReconciler) Reconcile(ctx context.Context, req ctr
 				)
 
 				if err != nil {
+					chain.Status.Phase = criuorgv1.PhaseFailed
+					chain.Status.ErrorMessage = err.Error()
+
+					_ = r.Status().Update(ctx, chain)
+
 					return ctrl.Result{}, err
 				}
 
+				chain.Status.SnapshotCount++
 			}
 
 		}
 
-	}
-	
-	
+		//Recording the completion time of the snapshot chain,
 
-	//Once checkpoint creation is completed, we can update the status to completed and exit the reconciliation loop
-	chain.Status.Phase = criuorgv1.PhaseCompleted
+		//this will be used to calculate the duration of the snapshot chain execution
 
-	if err := r.Status().Update(ctx, chain); err != nil {
-		return ctrl.Result{}, err
+		now := metav1.Now()
+		chain.Status.CompletionTime = &now
+
+		//Once checkpoint creation is completed, we can update the status to completed and exit the reconciliation loop
+		chain.Status.Phase = criuorgv1.PhaseCompleted
+
+		if err := r.Status().Update(ctx, chain); err != nil {
+			return ctrl.Result{}, err
+		}
+
 	}
 
 	return ctrl.Result{}, nil
