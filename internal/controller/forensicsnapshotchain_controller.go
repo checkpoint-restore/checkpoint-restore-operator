@@ -61,6 +61,11 @@ func (r *ForensicSnapshotChainReconciler) Reconcile(ctx context.Context, req ctr
 
 	log.Info("Reconciling ForensicSnapshotChain", "name", chain.Name)
 
+	//If checkpoint creation is completed, we can exit the reconciliation loop
+	if chain.Status.Phase == criuorgv1.PhaseCompleted {
+		return ctrl.Result{}, nil
+	}
+
 	//If the phase is empty, this is a new ForensicSnapshotChain
 	// and we need to initialize it, that's why pending
 	if chain.Status.Phase == criuorgv1.SnapshotChainPhase("") {
@@ -73,8 +78,15 @@ func (r *ForensicSnapshotChainReconciler) Reconcile(ctx context.Context, req ctr
 		return ctrl.Result{Requeue: true}, nil
 	}
 
+
 	// If the phase is pending, we need to start the snapshot chain
 	if chain.Status.Phase == criuorgv1.PhasePending {
+
+		//creating checkpoints
+		creator := NewCheckpointCreator(
+			r.Client,
+			r.RestConfig,
+		)
 
 		pods, err := getMatchingPods(
 			ctx,
@@ -102,11 +114,31 @@ func (r *ForensicSnapshotChainReconciler) Reconcile(ctx context.Context, req ctr
 
 			for _, container := range containers {
 
-				log.Info("Creating checkpoint for ", "pod", pod.Name, "container", container.Name, "node", pod.Spec.NodeName)
+				err := creator.createCheckpoint(
+					ctx,
+					chain.Spec.Namespace,
+					pod.Name,
+					container.Name,
+					pod.Spec.NodeName,
+				)
+
+				if err != nil {
+					return ctrl.Result{}, err
+				}
+
 			}
 
 		}
 
+	}
+	
+	
+
+	//Once checkpoint creation is completed, we can update the status to completed and exit the reconciliation loop
+	chain.Status.Phase = criuorgv1.PhaseCompleted
+
+	if err := r.Status().Update(ctx, chain); err != nil {
+		return ctrl.Result{}, err
 	}
 
 	return ctrl.Result{}, nil
