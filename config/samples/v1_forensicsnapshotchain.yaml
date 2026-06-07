@@ -11,7 +11,7 @@ spec:
 
   capture:
     interval: 5s
-    maxSnapshots: 5
+    maxSnapshots: 3
     maxDuration: 1m
 
   integrity:

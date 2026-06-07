@@ -67,6 +67,10 @@ func (r *ForensicSnapshotChainReconciler) Reconcile(ctx context.Context, req ctr
 		return ctrl.Result{}, nil
 	}
 
+	if chain.Status.Phase == criuorgv1.PhaseFailed {
+		return ctrl.Result{}, nil
+	}
+
 	//If the phase is empty, this is a new ForensicSnapshotChain
 	// and we need to initialize it, that's why pending
 	if chain.Status.Phase == criuorgv1.SnapshotChainPhase("") {
@@ -83,8 +87,19 @@ func (r *ForensicSnapshotChainReconciler) Reconcile(ctx context.Context, req ctr
 		return ctrl.Result{Requeue: true}, nil
 	}
 
-	// If the phase is pending, we need to start the snapshot chain
+	//If snapshot chain is pending then make it running
 	if chain.Status.Phase == criuorgv1.PhasePending {
+		chain.Status.Phase = criuorgv1.PhaseRunning
+
+		if err := r.Status().Update(ctx, chain); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{Requeue: true}, nil
+
+	}
+
+	// If the phase is running, we need to start/continue the snapshot chain
+	if chain.Status.Phase == criuorgv1.PhaseRunning {
 
 		//creating checkpoints
 		creator := NewCheckpointCreator(
@@ -135,25 +150,41 @@ func (r *ForensicSnapshotChainReconciler) Reconcile(ctx context.Context, req ctr
 					return ctrl.Result{}, err
 				}
 
+				//this counts the number of checkpoint files created
 				chain.Status.SnapshotCount++
+
+				if chain.Spec.Capture.MaxSnapshots != nil && chain.Status.SnapshotCount >= *chain.Spec.Capture.MaxSnapshots {
+					//Recording the completion time of the snapshot chain,
+					//this will be used to calculate the duration of the snapshot chain execution
+
+					now := metav1.Now()
+					chain.Status.CompletionTime = &now
+
+					//Once checkpoint creation is completed, we can update the status to completed and exit the reconciliation loop
+					chain.Status.Phase = criuorgv1.PhaseCompleted
+
+					if err := r.Status().Update(ctx, chain); err != nil {
+						return ctrl.Result{}, err
+					}
+
+					return ctrl.Result{}, nil
+
+				}
+
+			}
+
+			if err := r.Status().Update(ctx, chain); err != nil {
+				return ctrl.Result{}, err
 			}
 
 		}
 
-		//Recording the completion time of the snapshot chain,
+	}
 
-		//this will be used to calculate the duration of the snapshot chain execution
-
-		now := metav1.Now()
-		chain.Status.CompletionTime = &now
-
-		//Once checkpoint creation is completed, we can update the status to completed and exit the reconciliation loop
-		chain.Status.Phase = criuorgv1.PhaseCompleted
-
-		if err := r.Status().Update(ctx, chain); err != nil {
-			return ctrl.Result{}, err
-		}
-
+	if chain.Spec.Capture.Interval != nil {
+		return ctrl.Result{
+			RequeueAfter: chain.Spec.Capture.Interval.Duration,
+		}, nil
 	}
 
 	return ctrl.Result{}, nil
