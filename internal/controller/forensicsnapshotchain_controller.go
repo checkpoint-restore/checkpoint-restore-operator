@@ -18,16 +18,22 @@ package controller
 
 import (
 	"context"
+	"time"
 
+	meta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/rest"
+
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	criuorgv1 "github.com/checkpoint-restore/checkpoint-restore-operator/api/v1"
 )
+
+// Incase DefaultInterval is not specified by the user
+const DefaultInterval = 30 * time.Second
 
 // ForensicSnapshotChainReconciler reconciles a ForensicSnapshotChain object
 type ForensicSnapshotChainReconciler struct {
@@ -64,17 +70,34 @@ func (r *ForensicSnapshotChainReconciler) Reconcile(ctx context.Context, req ctr
 
 	//If checkpoint creation is completed, we can exit the reconciliation loop
 	if chain.Status.Phase == criuorgv1.PhaseCompleted {
+
 		return ctrl.Result{}, nil
 	}
 
 	if chain.Status.Phase == criuorgv1.PhaseFailed {
+		log.Info(
+			"ForensicSnapshotChain creation failed",
+			"error", chain.Status.ErrorMessage,
+		)
 		return ctrl.Result{}, nil
 	}
 
+	// no PHASE -> PENDING PHASE
 	//If the phase is empty, this is a new ForensicSnapshotChain
 	// and we need to initialize it, that's why pending
 	if chain.Status.Phase == criuorgv1.SnapshotChainPhase("") {
 		chain.Status.Phase = criuorgv1.PhasePending
+
+		meta.SetStatusCondition(
+			&chain.Status.Conditions,
+			metav1.Condition{
+				Type:               "Ready",
+				Status:             metav1.ConditionFalse,
+				Reason:             "Pending",
+				Message:            "ForensicSnapshotChain is pending, waiting to start snapshot chain",
+				LastTransitionTime: metav1.Now(),
+			},
+		)
 
 		//to record start time of the snapshot chain
 		now := metav1.Now()
@@ -87,17 +110,31 @@ func (r *ForensicSnapshotChainReconciler) Reconcile(ctx context.Context, req ctr
 		return ctrl.Result{Requeue: true}, nil
 	}
 
+	//PENDING -> RUNNING PHASE
 	//If snapshot chain is pending then make it running
 	if chain.Status.Phase == criuorgv1.PhasePending {
 		chain.Status.Phase = criuorgv1.PhaseRunning
 
+		meta.SetStatusCondition(
+			&chain.Status.Conditions,
+			metav1.Condition{
+				Type:               "Ready",
+				Status:             metav1.ConditionFalse,
+				Reason:             "Running",
+				Message:            "ForensicSnapshotChain is running, snapshot chain is in progress",
+				LastTransitionTime: metav1.Now(),
+			},
+		)
+
 		if err := r.Status().Update(ctx, chain); err != nil {
 			return ctrl.Result{}, err
 		}
+
 		return ctrl.Result{Requeue: true}, nil
 
 	}
 
+	//RUNNING PHASE
 	// If the phase is running, we need to start/continue the snapshot chain
 	if chain.Status.Phase == criuorgv1.PhaseRunning {
 
@@ -118,18 +155,49 @@ func (r *ForensicSnapshotChainReconciler) Reconcile(ctx context.Context, req ctr
 			return ctrl.Result{}, err
 		}
 
-		//logic for container selection
+		//logic for container selection/filteration
 		for _, pod := range pods {
-
-			log.Info(
-				"Resolved pod placement",
-				"pod", pod.Name,
-				"node", pod.Spec.NodeName,
-			)
 
 			containers := filterContainers(
 				pod, chain.Spec.ContainerNames,
 			)
+
+			// Checking duration constraint before creating a checkpoint
+			if chain.Spec.Capture.MaxDuration == nil {
+				log.Info(
+					"MaxDuration not specified/ is nil",
+				)
+
+			} else if chain.Status.StartTime != nil {
+				//Calculating the elapsed time since the start of the snapshot chain execution
+				elapsed := metav1.Now().Sub(chain.Status.StartTime.Time)
+
+				//If the elapsed time exceeds the specified maximum duration, we can update the status to completed and exit the reconciliation loop
+				if elapsed > chain.Spec.Capture.MaxDuration.Duration {
+
+					now := metav1.Now()
+					chain.Status.CompletionTime = &now
+					chain.Status.Phase = criuorgv1.PhaseCompleted
+
+					meta.SetStatusCondition(
+						&chain.Status.Conditions,
+						metav1.Condition{
+							Type:               "Ready",
+							Status:             metav1.ConditionTrue,
+							Reason:             "MaxDurationReached",
+							Message:            "Snapshot chain stopped as it reached the maximum duration",
+							LastTransitionTime: metav1.Now(),
+						},
+					)
+
+					if err := r.Status().Update(ctx, chain); err != nil {
+						return ctrl.Result{}, err
+					}
+
+					return ctrl.Result{}, nil
+
+				}
+			}
 
 			for _, container := range containers {
 
@@ -145,6 +213,17 @@ func (r *ForensicSnapshotChainReconciler) Reconcile(ctx context.Context, req ctr
 					chain.Status.Phase = criuorgv1.PhaseFailed
 					chain.Status.ErrorMessage = err.Error()
 
+					meta.SetStatusCondition(
+						&chain.Status.Conditions,
+						metav1.Condition{
+							Type:               "Ready",
+							Status:             metav1.ConditionFalse,
+							Reason:             "Failed",
+							Message:            err.Error(),
+							LastTransitionTime: metav1.Now(),
+						},
+					)
+
 					_ = r.Status().Update(ctx, chain)
 
 					return ctrl.Result{}, err
@@ -153,7 +232,18 @@ func (r *ForensicSnapshotChainReconciler) Reconcile(ctx context.Context, req ctr
 				//this counts the number of checkpoint files created
 				chain.Status.SnapshotCount++
 
-				if chain.Spec.Capture.MaxSnapshots != nil && chain.Status.SnapshotCount >= *chain.Spec.Capture.MaxSnapshots {
+				log.Info(
+					"Checkpoint created",
+					"pod", pod.Name,
+					"container", container.Name,
+				)
+
+				if chain.Spec.Capture.MaxSnapshots == nil {
+					log.Info(
+						"MaxSnapshots not specified/ is nil",
+					)
+
+				} else if chain.Status.SnapshotCount >= *chain.Spec.Capture.MaxSnapshots {
 					//Recording the completion time of the snapshot chain,
 					//this will be used to calculate the duration of the snapshot chain execution
 
@@ -163,31 +253,49 @@ func (r *ForensicSnapshotChainReconciler) Reconcile(ctx context.Context, req ctr
 					//Once checkpoint creation is completed, we can update the status to completed and exit the reconciliation loop
 					chain.Status.Phase = criuorgv1.PhaseCompleted
 
+					meta.SetStatusCondition(
+						&chain.Status.Conditions,
+						metav1.Condition{
+							Type:               "Ready",
+							Status:             metav1.ConditionTrue,
+							Reason:             "MaxSnapshotsReached",
+							Message:            "Snapshot chain completed as it reached the maximum number of snapshots",
+							LastTransitionTime: metav1.Now(),
+						},
+					)
+
 					if err := r.Status().Update(ctx, chain); err != nil {
 						return ctrl.Result{}, err
 					}
-
 					return ctrl.Result{}, nil
-
 				}
 
 			}
 
-			if err := r.Status().Update(ctx, chain); err != nil {
-				return ctrl.Result{}, err
-			}
+		}
 
+		if err := r.Status().Update(ctx, chain); err != nil {
+			return ctrl.Result{}, err
 		}
 
 	}
 
-	if chain.Spec.Capture.Interval != nil {
+	if chain.Spec.Capture.Interval == nil {
+		log.Info(
+			"Interval not specified, using default interval",
+			"interval", DefaultInterval,
+		)
+		return ctrl.Result{
+			RequeueAfter: DefaultInterval,
+		}, nil
+	} else {
 		return ctrl.Result{
 			RequeueAfter: chain.Spec.Capture.Interval.Duration,
 		}, nil
 	}
 
-	return ctrl.Result{}, nil
+	//Unreachable code, but we need to return something to satisfy the function signature
+	//return ctrl.Result{}, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
