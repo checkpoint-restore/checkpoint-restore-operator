@@ -1,0 +1,11 @@
+apiVersion: criu.org/v1
+kind: ForensicSnapshotChain
+metadata:
+  name: default-interval-test
+spec:
+  namespace: default
+  selector:
+    matchLabels:
+      app: nginx
+  capture:
+    maxSnapshots: 5
