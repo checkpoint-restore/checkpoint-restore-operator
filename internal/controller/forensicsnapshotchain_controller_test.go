@@ -21,64 +21,153 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"k8s.io/apimachinery/pkg/api/errors"
+
 	"k8s.io/apimachinery/pkg/types"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	"k8s.io/client-go/kubernetes/scheme"
+
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	ctrl "sigs.k8s.io/controller-runtime"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	criuorgv1 "github.com/checkpoint-restore/checkpoint-restore-operator/api/v1"
 )
 
-var _ = Describe("ForensicSnapshotChain Controller", func() {
-	Context("When reconciling a resource", func() {
-		const resourceName = "test-resource"
+var _ = Describe("ForensicSnapshotChainReconciler", func() {
+	
+	BeforeEach(func() {
+        Expect(criuorgv1.AddToScheme(scheme.Scheme)).To(Succeed())
+    })
 
-		ctx := context.Background()
+	makeReconciler := func(chain *criuorgv1.ForensicSnapshotChain) *ForensicSnapshotChainReconciler {
+		c := fake.NewClientBuilder().
+			WithScheme(scheme.Scheme).
+			WithObjects(chain).
+			WithStatusSubresource(chain).
+			Build()
 
-		typeNamespacedName := types.NamespacedName{
-			Name:      resourceName,
-			Namespace: "default", // TODO(user):Modify as needed
+		return &ForensicSnapshotChainReconciler{
+			Client: c,
+			Scheme: scheme.Scheme,
 		}
-		forensicsnapshotchain := &criuorgv1.ForensicSnapshotChain{}
+	}
 
-		BeforeEach(func() {
-			By("creating the custom resource for the Kind ForensicSnapshotChain")
-			err := k8sClient.Get(ctx, typeNamespacedName, forensicsnapshotchain)
-			if err != nil && errors.IsNotFound(err) {
-				resource := &criuorgv1.ForensicSnapshotChain{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      resourceName,
-						Namespace: "default",
-					},
-					// TODO(user): Specify other spec details if needed.
-				}
-				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
-			}
-		})
+	It("should initialize a new chain with Pending phase", func() {
 
-		AfterEach(func() {
-			// TODO(user): Cleanup logic after each test, like removing the resource instance.
-			resource := &criuorgv1.ForensicSnapshotChain{}
-			err := k8sClient.Get(ctx, typeNamespacedName, resource)
-			Expect(err).NotTo(HaveOccurred())
+		chain:= &criuorgv1.ForensicSnapshotChain{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-chain",
+				Namespace: "default",
+			},
+		}
 
-			By("Cleanup the specific resource instance ForensicSnapshotChain")
-			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
-		})
-		It("should successfully reconcile the resource", func() {
-			By("Reconciling the created resource")
-			controllerReconciler := &ForensicSnapshotChainReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
-			}
+		reconciler := makeReconciler(chain)
 
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: typeNamespacedName,
-			})
-			Expect(err).NotTo(HaveOccurred())
-			// TODO(user): Add more specific assertions depending on your controller's reconciliation logic.
-			// Example: If you expect a certain status condition after reconciliation, verify it here.
-		})
+		request := ctrl.Request{
+			NamespacedName: types.NamespacedName{
+				Name:      "test-chain",
+				Namespace: "default",
+			},
+		}
+
+		_,err := reconciler.Reconcile(context.Background(), request)
+
+		Expect(err).ToNot(HaveOccurred())
+
+		updatedChain := &criuorgv1.ForensicSnapshotChain{}
+		Expect(reconciler.Get(context.Background(), request.NamespacedName, updatedChain)).To(Succeed())
+		Expect(updatedChain.Status.Phase).To(Equal(criuorgv1.PhasePending))
 	})
+
+	It("should transition from Pending to Running phase", func() {
+		
+		chain:= &criuorgv1.ForensicSnapshotChain{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-chain",
+				Namespace: "default",
+			},
+		}
+
+		chain.Status.Phase = criuorgv1.PhasePending
+
+		reconciler := makeReconciler(chain)
+
+		request := ctrl.Request{
+			NamespacedName: types.NamespacedName{
+				Name:      "test-chain",
+				Namespace: "default",
+			},
+		}
+
+		_,err := reconciler.Reconcile(context.Background(), request)
+
+		Expect(err).ToNot(HaveOccurred())
+
+		updatedChain := &criuorgv1.ForensicSnapshotChain{}
+		Expect(reconciler.Get(context.Background(), request.NamespacedName, updatedChain)).To(Succeed())
+		Expect(updatedChain.Status.Phase).To(Equal(criuorgv1.PhaseRunning))
+
+
+	})
+
+
+	It("should return immediately when already in Completed phase", func() {
+		
+		chain:= &criuorgv1.ForensicSnapshotChain{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-chain",
+				Namespace: "default",
+			},
+		}
+
+		chain.Status.Phase = criuorgv1.PhaseCompleted
+		
+
+		reconciler := makeReconciler(chain)
+
+		request := ctrl.Request{
+			NamespacedName: types.NamespacedName{
+				Name:      "test-chain",
+				Namespace: "default",
+			},
+		}
+
+		result, err := reconciler.Reconcile(context.Background(), request)
+
+		Expect(err).ToNot(HaveOccurred())
+
+		Expect(result).To(Equal(ctrl.Result{}))
+	})
+
+
+	It("should return immediantely when already in Failed phase", func() {
+		
+		chain:= &criuorgv1.ForensicSnapshotChain{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-chain",
+				Namespace: "default",
+			},
+		}
+
+		chain.Status.Phase = criuorgv1.PhaseFailed
+		
+
+		reconciler := makeReconciler(chain)
+
+		request := ctrl.Request{
+			NamespacedName: types.NamespacedName{
+				Name:      "test-chain",
+				Namespace: "default",
+			},
+		}
+
+		result,err := reconciler.Reconcile(context.Background(), request)
+
+		Expect(err).ToNot(HaveOccurred())
+
+		Expect(result).To(Equal(ctrl.Result{}))
+	})
+
+
 })
