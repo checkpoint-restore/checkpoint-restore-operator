@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	v1 "github.com/checkpoint-restore/checkpoint-restore-operator/api/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -20,7 +22,13 @@ import (
 const (
 	defaultResourcePollInterval = 30 * time.Second
 	checkpointCooldown          = 5 * time.Minute
+	metricsAPIGroup             = "metrics.k8s.io"
+	podMetricsResource          = "pods"
 )
+
+// errMetricsNotAvailable is returned by fetchPodMetrics when the metrics API
+// reports that the pod's metrics object is not available yet.
+var errMetricsNotAvailable = errors.New("metrics not yet available for pod")
 
 // podMetricsResponse is a minimal representation of the metrics.k8s.io/v1beta1 PodMetrics object.
 type podMetricsResponse struct {
@@ -111,7 +119,11 @@ func (rt *ResourceTrigger) run(ctx context.Context) {
 		pod := &pods[i]
 		metrics, err := rt.fetchPodMetrics(ctx, httpClient, pod.Namespace, pod.Name)
 		if err != nil {
-			logger.Error(err, "resource trigger: failed to fetch metrics", "pod", pod.Name)
+			if errors.Is(err, errMetricsNotAvailable) {
+				logger.Info("resource trigger: metrics not yet available, will retry", "pod", pod.Name)
+			} else {
+				logger.Error(err, "resource trigger: failed to fetch metrics", "pod", pod.Name)
+			}
 			continue
 		}
 
@@ -198,13 +210,17 @@ func (rt *ResourceTrigger) fetchPodMetrics(ctx context.Context, httpClient *http
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("metrics API returned %d for %s/%s", resp.StatusCode, ns, podName)
-	}
-
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
+	}
+
+	if resp.StatusCode == http.StatusNotFound && isPodMetricsNotFound(body, podName) {
+		return nil, errMetricsNotAvailable
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("metrics API returned %d for %s/%s", resp.StatusCode, ns, podName)
 	}
 
 	var m podMetricsResponse
@@ -212,6 +228,25 @@ func (rt *ResourceTrigger) fetchPodMetrics(ctx context.Context, httpClient *http
 		return nil, err
 	}
 	return &m, nil
+}
+
+func isPodMetricsNotFound(body []byte, podName string) bool {
+	var status metav1.Status
+	if err := json.Unmarshal(body, &status); err != nil {
+		return false
+	}
+	if status.Reason != metav1.StatusReasonNotFound {
+		return false
+	}
+	if status.Code != 0 && status.Code != http.StatusNotFound {
+		return false
+	}
+	if status.Details == nil {
+		return false
+	}
+	return status.Details.Group == metricsAPIGroup &&
+		status.Details.Kind == podMetricsResource &&
+		status.Details.Name == podName
 }
 
 // memoryUsagePercent returns (usagePercent, true) when both usage and a non-zero limit are available.
