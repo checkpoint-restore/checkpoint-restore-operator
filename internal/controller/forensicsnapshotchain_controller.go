@@ -33,7 +33,7 @@ import (
 )
 
 // Incase DefaultInterval is not specified by the user
-const DefaultInterval = 30 * time.Second
+const DefaultInterval = 2 * time.Second
 
 // ForensicSnapshotChainReconciler reconciles a ForensicSnapshotChain object
 type ForensicSnapshotChainReconciler struct {
