@@ -32,7 +32,7 @@ import (
 	criuorgv1 "github.com/checkpoint-restore/checkpoint-restore-operator/api/v1"
 )
 
-// Incase DefaultInterval is not specified by the user
+// In case DefaultInterval is not specified by the user
 const DefaultInterval = 2 * time.Second
 
 // ForensicSnapshotChainReconciler reconciles a ForensicSnapshotChain object

@@ -141,7 +141,7 @@ var _ = Describe("ForensicSnapshotChainReconciler", func() {
 	})
 
 
-	It("should return immediantely when already in Failed phase", func() {
+	It("should return immediately when already in Failed phase", func() {
 		
 		chain:= &criuorgv1.ForensicSnapshotChain{
 			ObjectMeta: metav1.ObjectMeta{
