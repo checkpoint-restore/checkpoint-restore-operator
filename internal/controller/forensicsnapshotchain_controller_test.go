@@ -35,10 +35,10 @@ import (
 )
 
 var _ = Describe("ForensicSnapshotChainReconciler", func() {
-	
+
 	BeforeEach(func() {
-        Expect(criuorgv1.AddToScheme(scheme.Scheme)).To(Succeed())
-    })
+		Expect(criuorgv1.AddToScheme(scheme.Scheme)).To(Succeed())
+	})
 
 	makeReconciler := func(chain *criuorgv1.ForensicSnapshotChain) *ForensicSnapshotChainReconciler {
 		c := fake.NewClientBuilder().
@@ -55,7 +55,7 @@ var _ = Describe("ForensicSnapshotChainReconciler", func() {
 
 	It("should initialize a new chain with Pending phase", func() {
 
-		chain:= &criuorgv1.ForensicSnapshotChain{
+		chain := &criuorgv1.ForensicSnapshotChain{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-chain",
 				Namespace: "default",
@@ -71,7 +71,7 @@ var _ = Describe("ForensicSnapshotChainReconciler", func() {
 			},
 		}
 
-		_,err := reconciler.Reconcile(context.Background(), request)
+		_, err := reconciler.Reconcile(context.Background(), request)
 
 		Expect(err).ToNot(HaveOccurred())
 
@@ -81,8 +81,8 @@ var _ = Describe("ForensicSnapshotChainReconciler", func() {
 	})
 
 	It("should transition from Pending to Running phase", func() {
-		
-		chain:= &criuorgv1.ForensicSnapshotChain{
+
+		chain := &criuorgv1.ForensicSnapshotChain{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-chain",
 				Namespace: "default",
@@ -100,7 +100,7 @@ var _ = Describe("ForensicSnapshotChainReconciler", func() {
 			},
 		}
 
-		_,err := reconciler.Reconcile(context.Background(), request)
+		_, err := reconciler.Reconcile(context.Background(), request)
 
 		Expect(err).ToNot(HaveOccurred())
 
@@ -108,13 +108,11 @@ var _ = Describe("ForensicSnapshotChainReconciler", func() {
 		Expect(reconciler.Get(context.Background(), request.NamespacedName, updatedChain)).To(Succeed())
 		Expect(updatedChain.Status.Phase).To(Equal(criuorgv1.PhaseRunning))
 
-
 	})
 
-
 	It("should return immediately when already in Completed phase", func() {
-		
-		chain:= &criuorgv1.ForensicSnapshotChain{
+
+		chain := &criuorgv1.ForensicSnapshotChain{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-chain",
 				Namespace: "default",
@@ -122,7 +120,6 @@ var _ = Describe("ForensicSnapshotChainReconciler", func() {
 		}
 
 		chain.Status.Phase = criuorgv1.PhaseCompleted
-		
 
 		reconciler := makeReconciler(chain)
 
@@ -140,10 +137,9 @@ var _ = Describe("ForensicSnapshotChainReconciler", func() {
 		Expect(result).To(Equal(ctrl.Result{}))
 	})
 
-
 	It("should return immediately when already in Failed phase", func() {
-		
-		chain:= &criuorgv1.ForensicSnapshotChain{
+
+		chain := &criuorgv1.ForensicSnapshotChain{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-chain",
 				Namespace: "default",
@@ -151,7 +147,6 @@ var _ = Describe("ForensicSnapshotChainReconciler", func() {
 		}
 
 		chain.Status.Phase = criuorgv1.PhaseFailed
-		
 
 		reconciler := makeReconciler(chain)
 
@@ -162,12 +157,11 @@ var _ = Describe("ForensicSnapshotChainReconciler", func() {
 			},
 		}
 
-		result,err := reconciler.Reconcile(context.Background(), request)
+		result, err := reconciler.Reconcile(context.Background(), request)
 
 		Expect(err).ToNot(HaveOccurred())
 
 		Expect(result).To(Equal(ctrl.Result{}))
 	})
-
 
 })
