@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -21,6 +22,10 @@ const (
 	defaultResourcePollInterval = 30 * time.Second
 	checkpointCooldown          = 5 * time.Minute
 )
+
+// errMetricsNotAvailable is returned by fetchPodMetrics when the metrics API
+// responds with 404 — the pod exists but metrics-server hasn't scraped it yet.
+var errMetricsNotAvailable = errors.New("metrics not yet available for pod")
 
 // podMetricsResponse is a minimal representation of the metrics.k8s.io/v1beta1 PodMetrics object.
 type podMetricsResponse struct {
@@ -111,7 +116,11 @@ func (rt *ResourceTrigger) run(ctx context.Context) {
 		pod := &pods[i]
 		metrics, err := rt.fetchPodMetrics(ctx, httpClient, pod.Namespace, pod.Name)
 		if err != nil {
-			logger.Error(err, "resource trigger: failed to fetch metrics", "pod", pod.Name)
+			if errors.Is(err, errMetricsNotAvailable) {
+				logger.Info("resource trigger: metrics not yet available, will retry", "pod", pod.Name)
+			} else {
+				logger.Error(err, "resource trigger: failed to fetch metrics", "pod", pod.Name)
+			}
 			continue
 		}
 
@@ -198,6 +207,9 @@ func (rt *ResourceTrigger) fetchPodMetrics(ctx context.Context, httpClient *http
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, errMetricsNotAvailable
+	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("metrics API returned %d for %s/%s", resp.StatusCode, ns, podName)
 	}
