@@ -408,19 +408,19 @@ func applyPolicies(log logr.Logger, details *checkpointDetails) {
 	} else {
 		// Apply global policies if no specific policy found
 		handleCheckpointsForLevel(log, details, "container", Policy{
-			RetainOrphan:      *retainOrphan,
+			RetainOrphan:      ifNil(retainOrphan),
 			MaxCheckpoints:    maxCheckpointsPerContainer,
 			MaxCheckpointSize: maxCheckpointSize,
 			MaxTotalSize:      maxTotalSizePerContainer,
 		})
 		handleCheckpointsForLevel(log, details, "pod", Policy{
-			RetainOrphan:      *retainOrphan,
+			RetainOrphan:      ifNil(retainOrphan),
 			MaxCheckpoints:    maxCheckpointsPerPod,
 			MaxCheckpointSize: maxCheckpointSize,
 			MaxTotalSize:      maxTotalSizePerPod,
 		})
 		handleCheckpointsForLevel(log, details, "namespace", Policy{
-			RetainOrphan:      *retainOrphan,
+			RetainOrphan:      ifNil(retainOrphan),
 			MaxCheckpoints:    maxCheckpointsPerNamespace,
 			MaxCheckpointSize: maxCheckpointSize,
 			MaxTotalSize:      maxTotalSizePerNamespace,
