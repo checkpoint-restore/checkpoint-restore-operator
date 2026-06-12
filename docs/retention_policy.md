@@ -110,3 +110,52 @@ Applies to all namespaces, pods, and containers if no more specific policy is de
 ### Example
 
 If a pod has a defined pod policy, but one of its containers has a defined container policy, the container policy will take precedence for that container. The pod policy will apply to the remaining containers within the pod.
+
+## Pinning Individual Checkpoints
+
+To prevent a specific checkpoint archive from being deleted by retention policies, create a `.keep`
+marker file next to the `.tar` archive. The file must have the same name as the archive with `.keep`
+appended:
+
+```
+/var/lib/kubelet/checkpoints/
+  checkpoint-mypod_default-mycontainer-2026-06-12T10:00:00Z.tar
+  checkpoint-mypod_default-mycontainer-2026-06-12T10:00:00Z.tar.keep
+```
+
+### Creating a marker file
+
+The operator only checks whether the marker file exists:
+
+```bash
+touch /var/lib/kubelet/checkpoints/checkpoint-<pod>_<ns>-<container>-<timestamp>.tar.keep
+```
+
+The file can be empty, or store any notes (e.g., why or when the checkpoint was pinned).
+
+### How pinned checkpoints interact with retention policies
+
+Pinned checkpoints count toward all retention limits (`maxCheckpoints`, `maxTotalSize`,
+`maxCheckpointSize`), but are never deleted by the GC, even if they individually exceed
+`maxCheckpointSize` or contribute to a `maxTotalSize` breach.
+
+For the count (`maxCheckpoints`) and total size (`maxTotalSize`) limits, if the limit still cannot
+be met after deleting every unpinned candidate, the operator logs a message identifying the
+remaining pinned archives by name. Retention is re-evaluated on every checkpoint write and pod
+event. To avoid flooding, the log this message is logged only when the set of blocking archives
+changes for a given scope and limit, not on every evaluation.
+
+A pinned archive that individually exceeds `maxCheckpointSize` is retained and logged
+(`checkpoint is pinned, skipping deletion`), but does not trigger the named-archive message above.
+
+### Unpinning a checkpoint
+
+Delete the `.keep` file to unpin a checkpoint:
+
+```bash
+rm /var/lib/kubelet/checkpoints/checkpoint-<pod>_<ns>-<container>-<timestamp>.tar.keep
+```
+
+The checkpoint becomes eligible for deletion on the **next GC cycle** (not immediately).
+The GC does not cache pinning state between cycles.
+
