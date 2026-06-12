@@ -40,7 +40,7 @@ var _ = Describe("applyPolicies", func() {
 
 	AfterEach(func() {
 		checkpointDirectory = savedDir
-		os.RemoveAll(tmpDir)
+		Expect(os.RemoveAll(tmpDir)).To(Succeed())
 	})
 
 	It("does not panic when retainOrphan is nil", func() {
