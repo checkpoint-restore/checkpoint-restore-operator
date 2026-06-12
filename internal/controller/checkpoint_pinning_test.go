@@ -143,3 +143,41 @@ var _ = Describe("partitionArchives", func() {
 		}
 	})
 })
+
+var _ = Describe("retention unreachable log dedup", func() {
+	const key = "container|count|ns/pod/ctr"
+
+	AfterEach(func() {
+		clearRetentionUnreachable(key)
+	})
+
+	It("logs on first breach", func() {
+		Expect(logRetentionUnreachableChanged(key, []string{"/a.tar"})).To(BeTrue())
+	})
+
+	It("suppresses repeats of the same blocking set", func() {
+		Expect(logRetentionUnreachableChanged(key, []string{"/a.tar"})).To(BeTrue())
+		Expect(logRetentionUnreachableChanged(key, []string{"/a.tar"})).To(BeFalse())
+		Expect(logRetentionUnreachableChanged(key, []string{"/a.tar"})).To(BeFalse())
+	})
+
+	It("logs again when the blocking set changes", func() {
+		Expect(logRetentionUnreachableChanged(key, []string{"/a.tar"})).To(BeTrue())
+		Expect(logRetentionUnreachableChanged(key, []string{"/a.tar", "/b.tar"})).To(BeTrue())
+		Expect(logRetentionUnreachableChanged(key, []string{"/a.tar", "/b.tar"})).To(BeFalse())
+	})
+
+	It("logs again after the breach clears and recurs", func() {
+		Expect(logRetentionUnreachableChanged(key, []string{"/a.tar"})).To(BeTrue())
+		clearRetentionUnreachable(key)
+		Expect(logRetentionUnreachableChanged(key, []string{"/a.tar"})).To(BeTrue())
+	})
+
+	It("tracks count and size keys independently", func() {
+		countKey := "container|count|ns/pod/ctr"
+		sizeKey := "container|size|ns/pod/ctr"
+		defer clearRetentionUnreachable(sizeKey)
+		Expect(logRetentionUnreachableChanged(countKey, []string{"/a.tar"})).To(BeTrue())
+		Expect(logRetentionUnreachableChanged(sizeKey, []string{"/a.tar"})).To(BeTrue())
+	})
+})

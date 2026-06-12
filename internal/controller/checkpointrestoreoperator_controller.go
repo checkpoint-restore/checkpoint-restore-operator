@@ -574,6 +574,20 @@ func handleCheckpointsForLevel(log logr.Logger, details *checkpointDetails, leve
 	// Partition into deletable and pinned before any deletion.
 	_, pinned := partitionArchives(filteredArchives)
 
+	// Per-scope keys for edge-triggered "retention unreachable" logging, so the message
+	// is logged only when the set of blocking pinned archives changes for this scope.
+	var scope string
+	switch level {
+	case "pod":
+		scope = details.namespace + "/" + details.pod
+	case "namespace":
+		scope = details.namespace
+	default: // container
+		scope = details.namespace + "/" + details.pod + "/" + details.container
+	}
+	countKey := level + "|count|" + scope
+	sizeKey := level + "|size|" + scope
+
 	if !policy.RetainOrphan {
 		exist, err := resourceExistsInCluster(level, details)
 		if err != nil {
@@ -657,13 +671,17 @@ func handleCheckpointsForLevel(log logr.Logger, details *checkpointDetails, leve
 				break
 			}
 		}
-		if checkpointArchivesCounter > policy.MaxCheckpoints {
+	}
+	if checkpointArchivesCounter > policy.MaxCheckpoints {
+		if logRetentionUnreachableChanged(countKey, pinned) {
 			log.Info("retention limit unreachable: pinned checkpoints prevent full count rotation",
 				"remaining", checkpointArchivesCounter,
 				"limit", policy.MaxCheckpoints,
 				"pinned", pinnedNames(pinned),
 			)
 		}
+	} else {
+		clearRetentionUnreachable(countKey)
 	}
 
 	// Handle total size against maxTotalSize.
@@ -684,13 +702,17 @@ func handleCheckpointsForLevel(log logr.Logger, details *checkpointDetails, leve
 				break
 			}
 		}
-		if policy.MaxTotalSize.Cmp(*totalSize) < 0 {
+	}
+	if policy.MaxTotalSize.Cmp(*totalSize) < 0 {
+		if logRetentionUnreachableChanged(sizeKey, pinned) {
 			log.Info("retention limit unreachable: pinned checkpoints prevent full size rotation",
 				"totalSize", totalSize.String(),
 				"limit", policy.MaxTotalSize.String(),
 				"pinned", pinnedNames(pinned),
 			)
 		}
+	} else {
+		clearRetentionUnreachable(sizeKey)
 	}
 }
 
@@ -701,6 +723,38 @@ func pinnedNames(paths []string) []string {
 		names[i] = filepath.Base(p)
 	}
 	return names
+}
+
+// retentionUnreachableState records, per scope+limit key, the set of pinned archive
+// names last reported as blocking retention. It lets handleCheckpointsForLevel log the
+// "retention unreachable" message edge-triggered (only when the blocking set changes)
+// instead of on every evaluation, which would otherwise flood the log because retention
+// is re-evaluated on every checkpoint write and pod event.
+var (
+	retentionUnreachableMu    sync.Mutex
+	retentionUnreachableState = map[string]string{}
+)
+
+// logRetentionUnreachableChanged reports whether the set of pinned archives blocking
+// retention for key differs from the last call. It records the new set as a side effect,
+// so the caller should log only when this returns true.
+func logRetentionUnreachableChanged(key string, pinned []string) bool {
+	cur := strings.Join(pinnedNames(pinned), ",")
+	retentionUnreachableMu.Lock()
+	defer retentionUnreachableMu.Unlock()
+	if retentionUnreachableState[key] == cur {
+		return false
+	}
+	retentionUnreachableState[key] = cur
+	return true
+}
+
+// clearRetentionUnreachable forgets any recorded blocking state for key, so that a later
+// genuine breach is logged again rather than suppressed as a duplicate.
+func clearRetentionUnreachable(key string) {
+	retentionUnreachableMu.Lock()
+	defer retentionUnreachableMu.Unlock()
+	delete(retentionUnreachableState, key)
 }
 
 func selectArchivesToDelete(log logr.Logger, archives []string, archiveSizes map[string]int64, excess int64, policy RetentionPolicy) []string {
