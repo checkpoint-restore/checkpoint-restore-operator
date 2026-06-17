@@ -45,6 +45,8 @@ The operator will repeatedly create checkpoints of the selected container every 
 - 30 checkpoints have been created, or
     
 - 5 minutes have elapsed since the chain started.
+
+Once the chain reaches `Completed`, the configured `postSnapshotAction` runs exactly once. But note, the evidence is preserved.
     
 
 ## Spec Reference
@@ -82,17 +84,19 @@ kubectl explain forensicsnapshotchain.spec
 
 A `ForensicSnapshotChain` progresses through the following phases:
 
-```text
+```
 Pending
    ↓
 Running
    ↓
 Completed
+   ↓
+Postsnapshot action (optional)
 ```
 
 or
 
-```text
+```
 Pending
    ↓
 Running
@@ -116,6 +120,20 @@ The chain has successfully finished because one of the configured completion con
     
 - `maxDuration` reached
     
+### Post-Snapshot Action
+
+- `postSnapshotAction` (string): an action to execute once, after the snapshot chain reaches a terminal state (`Completed`). 
+  This does not run after each individual snapshot only once, after the entire chain finishes.
+
+  Supported values:
+  - `None` (default): no action is taken.
+  - `DeletePod`: deletes all matching pods after the chain completes. If the 
+    pods are managed by a Deployment, ReplicaSet, or similar controller, 
+    Kubernetes will automatically create replacement pods.
+
+  This is intended for incident-response workflows where forensic evidence 
+  must be preserved via checkpointing before the compromised workload is 
+  terminated as a containment measure.
 
 ### Failed
 
@@ -134,7 +152,7 @@ Example:
 ```yaml
 status:
   phase: Completed
-  snapshotCount: 30
+  snapshotCount: 3
   startTime: "2026-06-07T06:45:27Z"
   completionTime: "2026-06-07T06:50:27Z"
 ```
@@ -152,3 +170,5 @@ The following features are planned for future releases:
 - Incremental checkpointing
     
 - Checkpoint chain verification and analysis workflows
+
+- postSnapshot Action currently supports only DeletePod. Additional actions as per need may be in future releases.
