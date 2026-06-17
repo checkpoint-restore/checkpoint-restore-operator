@@ -54,6 +54,14 @@ const (
 	PhaseFailed    SnapshotChainPhase = "Failed"
 )
 
+// PostSnapshotAction defines the action to take after each snapshotting of a pod, like after the snapshot chain is created
+type PostSnapshotAction string
+
+const (
+	PostSnapshotActionNone      PostSnapshotAction = "None"
+	PostSnapshotActionDeletePod PostSnapshotAction = "DeletePod"
+)
+
 // ForensicSnapshotChainSpec defines the desired state of ForensicSnapshotChain
 type ForensicSnapshotChainSpec struct {
 	// Namespace is the namespace containing the selected pods
@@ -71,6 +79,10 @@ type ForensicSnapshotChainSpec struct {
 	// Integrity defines integrity verification
 	// +optional
 	Integrity IntegritySpec `json:"integrity,omitempty"`
+
+	// +kubebuilder:validation:Enum=None;DeletePod
+	// +kubebuilder:default=None
+	PostSnapshotAction PostSnapshotAction `json:"postSnapshotAction,omitempty"`
 }
 
 // ForensicSnapshotChainStatus defines the observed state of ForensicSnapshotChain.
