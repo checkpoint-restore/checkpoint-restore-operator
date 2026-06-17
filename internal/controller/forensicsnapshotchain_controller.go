@@ -29,6 +29,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
+	corev1 "k8s.io/api/core/v1"
+
 	criuorgv1 "github.com/checkpoint-restore/checkpoint-restore-operator/api/v1"
 )
 
@@ -46,6 +48,7 @@ type ForensicSnapshotChainReconciler struct {
 // +kubebuilder:rbac:groups=criu.org,resources=forensicsnapshotchains,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=criu.org,resources=forensicsnapshotchains/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=criu.org,resources=forensicsnapshotchains/finalizers,verbs=update
+// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;delete
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -165,7 +168,7 @@ func (r *ForensicSnapshotChainReconciler) Reconcile(ctx context.Context, req ctr
 			// Checking duration constraint before creating a checkpoint
 			if chain.Spec.Capture.MaxDuration == nil {
 				log.Info(
-					"MaxDuration not specified/ is nil",
+					"MaxDuration not specified is nil",
 				)
 
 			} else if chain.Status.StartTime != nil {
@@ -189,6 +192,13 @@ func (r *ForensicSnapshotChainReconciler) Reconcile(ctx context.Context, req ctr
 							LastTransitionTime: metav1.Now(),
 						},
 					)
+
+					//execute post-snapshot action if specified
+					if err := r.executePostSnapshotAction(ctx, chain, pods); err != nil {
+						log.Error(err, "Failed to execute post-snapshot action")
+						//Irrespective of post snapshot action, chain shouldn't be failed.
+						//Evidence should be preserved.
+					}
 
 					if err := r.Status().Update(ctx, chain); err != nil {
 						return ctrl.Result{}, err
@@ -240,7 +250,7 @@ func (r *ForensicSnapshotChainReconciler) Reconcile(ctx context.Context, req ctr
 
 				if chain.Spec.Capture.MaxSnapshots == nil {
 					log.Info(
-						"MaxSnapshots not specified/ is nil",
+						"MaxSnapshots not specified is nil",
 					)
 
 				} else if chain.Status.SnapshotCount >= *chain.Spec.Capture.MaxSnapshots {
@@ -263,6 +273,13 @@ func (r *ForensicSnapshotChainReconciler) Reconcile(ctx context.Context, req ctr
 							LastTransitionTime: metav1.Now(),
 						},
 					)
+
+					//execute post-snapshot action if specified
+					if err := r.executePostSnapshotAction(ctx, chain, pods); err != nil {
+						log.Error(err, "Failed to execute post-snapshot action")
+						//Irrespective of post snapshot action, chain shouldn't be failed.
+						//Evidence should be preserved.
+					}
 
 					if err := r.Status().Update(ctx, chain); err != nil {
 						return ctrl.Result{}, err
@@ -304,4 +321,26 @@ func (r *ForensicSnapshotChainReconciler) SetupWithManager(mgr ctrl.Manager) err
 		For(&criuorgv1.ForensicSnapshotChain{}).
 		Named("forensicsnapshotchain").
 		Complete(r)
+}
+
+// function to execute the post-snapshot action specified in the spec
+func (r *ForensicSnapshotChainReconciler) executePostSnapshotAction(
+	ctx context.Context,
+	chain *criuorgv1.ForensicSnapshotChain,
+	pods []corev1.Pod,
+) error {
+	log := logf.FromContext(ctx)
+
+	if chain.Spec.PostSnapshotAction != criuorgv1.PostSnapshotActionDeletePod {
+		return nil
+	}
+
+	for _, pod := range pods {
+		log.Info("Deleting pod as post-snapshot action", "pod", pod.Name)
+		if err := r.Delete(ctx, &pod); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
