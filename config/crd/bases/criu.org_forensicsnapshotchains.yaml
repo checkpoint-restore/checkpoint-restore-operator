@@ -69,6 +69,14 @@ spec:
               namespace:
                 description: Namespace is the namespace containing the selected pods
                 type: string
+              postSnapshotAction:
+                default: None
+                description: PostSnapshotAction defines the action to take after each
+                  snapshotting of a pod, like after the snapshot chain is created
+                enum:
+                - None
+                - DeletePod
+                type: string
               selector:
                 description: Selector identifies the target pods
                 properties:
