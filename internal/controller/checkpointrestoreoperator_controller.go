@@ -571,6 +571,23 @@ func handleCheckpointsForLevel(log logr.Logger, details *checkpointDetails, leve
 		filteredArchives = append(filteredArchives, archive)
 	}
 
+	// Partition into deletable and pinned before any deletion.
+	_, pinned := partitionArchives(filteredArchives)
+
+	// Per-scope keys for edge-triggered "retention unreachable" logging, so the message
+	// is logged only when the set of blocking pinned archives changes for this scope.
+	var scope string
+	switch level {
+	case "pod":
+		scope = details.namespace + "/" + details.pod
+	case "namespace":
+		scope = details.namespace
+	default: // container
+		scope = details.namespace + "/" + details.pod + "/" + details.container
+	}
+	countKey := level + "|count|" + scope
+	sizeKey := level + "|size|" + scope
+
 	if !policy.RetainOrphan {
 		exist, err := resourceExistsInCluster(level, details)
 		if err != nil {
@@ -578,12 +595,15 @@ func handleCheckpointsForLevel(log logr.Logger, details *checkpointDetails, leve
 		}
 
 		if !exist {
-			log.Info("RetainOrphan is set to false, deleting all checkpoints", "level", level)
+			log.Info("RetainOrphan is set to false, deleting all unpinned checkpoints", "level", level)
 
 			for _, archive := range filteredArchives {
+				if isCheckpointPinned(archive) {
+					log.Info("checkpoint is pinned, skipping deletion", "archive", archive)
+					continue
+				}
 				log.Info("Deleting checkpoint archive due to retainCheckpoint=false", "archive", archive)
-				err := os.Remove(archive)
-				if err != nil {
+				if err := os.Remove(archive); err != nil {
 					log.Error(err, "failed to remove checkpoint archive", "archive", archive)
 				}
 			}
@@ -595,7 +615,7 @@ func handleCheckpointsForLevel(log logr.Logger, details *checkpointDetails, leve
 	checkpointArchivesCounter := len(filteredArchives)
 	totalSize := resource.NewQuantity(0, resource.BinarySI)
 	archiveSizes := make(map[string]int64)
-	archivesToDelete := make(map[int64]string)
+	var deletableCandidates []string
 
 	for _, c := range filteredArchives {
 		fi, err := os.Stat(c)
@@ -608,28 +628,42 @@ func handleCheckpointsForLevel(log logr.Logger, details *checkpointDetails, leve
 		log.Info("Checkpoint archive details", "archive", c, "size", currentSize.String(), "maxCheckpointSize", policy.MaxCheckpointSize.String())
 
 		if policy.MaxCheckpointSize.Cmp(*currentSize) < 0 {
+			if isCheckpointPinned(c) {
+				// Pinned archive exceeds per-file limit: count it but do not delete.
+				log.Info("checkpoint is pinned, skipping deletion", "archive", c)
+				log.V(1).Info("pinned archive included in accounting", "archive", c, "size", currentSize.String())
+				totalSize.Add(*currentSize)
+				archiveSizes[c] = fi.Size()
+				continue
+			}
 			log.Info("Deleting checkpoint archive due to exceeding MaxCheckpointSize", "archive", c, "size", currentSize.String(), "maxCheckpointSize", policy.MaxCheckpointSize.String())
-			err := os.Remove(c)
-			if err != nil {
+			if err := os.Remove(c); err != nil {
 				log.Error(err, "failed to remove checkpoint archive", "archive", c)
 			}
+			// The archive is no longer retained; drop it from the count so the
+			// count-rotation phase below does not over-delete surviving archives.
+			checkpointArchivesCounter--
 			continue
 		}
 
 		totalSize.Add(*currentSize)
 		archiveSizes[c] = fi.Size()
-		archivesToDelete[fi.ModTime().UnixMicro()] = c
+
+		if isCheckpointPinned(c) {
+			log.V(1).Info("pinned archive included in accounting", "archive", c, "size", currentSize.String())
+		} else {
+			deletableCandidates = append(deletableCandidates, c)
+		}
 	}
 
-	// Handle excess checkpoints by count
+	// Handle excess checkpoints by count.
 	if policy.MaxCheckpoints > 0 && checkpointArchivesCounter > policy.MaxCheckpoints {
 		excessCount := int64(checkpointArchivesCounter - policy.MaxCheckpoints)
 		log.Info("Checkpoint count exceeds limit", "checkpointArchivesCounter", checkpointArchivesCounter, "maxCheckpoints", policy.MaxCheckpoints, "excessCount", excessCount)
-		toDelete := selectArchivesToDelete(log, filteredArchives, archiveSizes, excessCount, ByCount)
+		toDelete := selectArchivesToDelete(log, deletableCandidates, archiveSizes, excessCount, ByCount)
 		for _, archive := range toDelete {
 			log.Info("Deleting checkpoint archive due to excess count", "archive", archive)
-			err := os.Remove(archive)
-			if err != nil {
+			if err := os.Remove(archive); err != nil {
 				log.Error(err, "removal of checkpoint archive failed", "archive", archive)
 			}
 			checkpointArchivesCounter--
@@ -638,17 +672,27 @@ func handleCheckpointsForLevel(log logr.Logger, details *checkpointDetails, leve
 			}
 		}
 	}
+	if checkpointArchivesCounter > policy.MaxCheckpoints {
+		if logRetentionUnreachableChanged(countKey, pinned) {
+			log.Info("retention limit unreachable: pinned checkpoints prevent full count rotation",
+				"remaining", checkpointArchivesCounter,
+				"limit", policy.MaxCheckpoints,
+				"pinned", pinnedNames(pinned),
+			)
+		}
+	} else {
+		clearRetentionUnreachable(countKey)
+	}
 
-	// Handle total size against maxTotalSize
+	// Handle total size against maxTotalSize.
 	if policy.MaxTotalSize.Cmp(*totalSize) < 0 {
 		excessSize := totalSize.DeepCopy()
 		excessSize.Sub(policy.MaxTotalSize)
 		log.Info("Total size of checkpoint archives exceeds limit", "totalSize", totalSize.String(), "maxTotalSize", policy.MaxTotalSize.String(), "excessSize", excessSize.String())
-		toDelete := selectArchivesToDelete(log, filteredArchives, archiveSizes, excessSize.Value(), BySize)
+		toDelete := selectArchivesToDelete(log, deletableCandidates, archiveSizes, excessSize.Value(), BySize)
 		for _, archive := range toDelete {
 			log.Info("Deleting checkpoint archive due to excess size", "archive", archive)
-			err := os.Remove(archive)
-			if err != nil {
+			if err := os.Remove(archive); err != nil {
 				log.Error(err, "removal of checkpoint archive failed", "archive", archive)
 			}
 			currentSize := resource.NewQuantity(archiveSizes[archive], resource.BinarySI)
@@ -659,6 +703,58 @@ func handleCheckpointsForLevel(log logr.Logger, details *checkpointDetails, leve
 			}
 		}
 	}
+	if policy.MaxTotalSize.Cmp(*totalSize) < 0 {
+		if logRetentionUnreachableChanged(sizeKey, pinned) {
+			log.Info("retention limit unreachable: pinned checkpoints prevent full size rotation",
+				"totalSize", totalSize.String(),
+				"limit", policy.MaxTotalSize.String(),
+				"pinned", pinnedNames(pinned),
+			)
+		}
+	} else {
+		clearRetentionUnreachable(sizeKey)
+	}
+}
+
+// pinnedNames returns the base filenames of pinned archives for log messages.
+func pinnedNames(paths []string) []string {
+	names := make([]string, len(paths))
+	for i, p := range paths {
+		names[i] = filepath.Base(p)
+	}
+	return names
+}
+
+// retentionUnreachableState records, per scope+limit key, the set of pinned archive
+// names last reported as blocking retention. It lets handleCheckpointsForLevel log the
+// "retention unreachable" message edge-triggered (only when the blocking set changes)
+// instead of on every evaluation, which would otherwise flood the log because retention
+// is re-evaluated on every checkpoint write and pod event.
+var (
+	retentionUnreachableMu    sync.Mutex
+	retentionUnreachableState = map[string]string{}
+)
+
+// logRetentionUnreachableChanged reports whether the set of pinned archives blocking
+// retention for key differs from the last call. It records the new set as a side effect,
+// so the caller should log only when this returns true.
+func logRetentionUnreachableChanged(key string, pinned []string) bool {
+	cur := strings.Join(pinnedNames(pinned), ",")
+	retentionUnreachableMu.Lock()
+	defer retentionUnreachableMu.Unlock()
+	if retentionUnreachableState[key] == cur {
+		return false
+	}
+	retentionUnreachableState[key] = cur
+	return true
+}
+
+// clearRetentionUnreachable forgets any recorded blocking state for key, so that a later
+// genuine breach is logged again rather than suppressed as a duplicate.
+func clearRetentionUnreachable(key string) {
+	retentionUnreachableMu.Lock()
+	defer retentionUnreachableMu.Unlock()
+	delete(retentionUnreachableState, key)
 }
 
 func selectArchivesToDelete(log logr.Logger, archives []string, archiveSizes map[string]int64, excess int64, policy RetentionPolicy) []string {
@@ -683,7 +779,9 @@ func selectArchivesToDelete(log logr.Logger, archives []string, archiveSizes map
 			return fileInfo1.ModTime().Before(fileInfo2.ModTime())
 		})
 
-		for i := 0; i < int(excess); i++ {
+		// excess may exceed len(archives) when pinned archives are excluded
+		// from the candidate list; only delete as many as are available.
+		for i := 0; i < int(excess) && i < len(archives); i++ {
 			toDelete = append(toDelete, archives[i])
 		}
 
@@ -906,6 +1004,10 @@ func (gc *garbageCollector) runGarbageCollector() {
 					return
 				}
 				if !event.Has(fsnotify.Create) && !event.Has(fsnotify.Write) {
+					continue
+				}
+				if strings.HasSuffix(event.Name, ".keep") {
+					log.V(1).Info("skipping .keep file in GC event handler", "path", event.Name)
 					continue
 				}
 				// Get timer.
