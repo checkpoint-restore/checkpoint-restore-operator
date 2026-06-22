@@ -198,6 +198,33 @@ spec:
                 description: SnapshotChainPhase represents the state of a forensic
                   snapshot chain
                 type: string
+              snapshotChainRecords:
+                description: SnapshotRecords is a list of snapshot records
+                items:
+                  properties:
+                    checkpointPath:
+                      type: string
+                    containerName:
+                      type: string
+                    index:
+                      type: integer
+                    podName:
+                      type: string
+                    previousSHA256Hash:
+                      type: string
+                    sha256Hash:
+                      type: string
+                    snapshotTimestamp:
+                      format: date-time
+                      type: string
+                  required:
+                  - checkpointPath
+                  - containerName
+                  - index
+                  - podName
+                  - snapshotTimestamp
+                  type: object
+                type: array
               snapshotCount:
                 type: integer
               startTime:
