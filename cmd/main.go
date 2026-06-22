@@ -25,6 +25,8 @@ import (
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
+	"k8s.io/client-go/kubernetes"
+
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -131,6 +133,12 @@ func main() {
 		setupLog.Error(err, "unable to start manager")
 		os.Exit(1)
 	}
+	
+	clientset, err := kubernetes.NewForConfig(mgr.GetConfig())
+	if err != nil {
+    	setupLog.Error(err, "unable to create kubernetes clientset")
+		os.Exit(1)
+	}
 
 	if err = (&controller.CheckpointRestoreOperatorReconciler{
 		Client: mgr.GetClient(),
@@ -151,6 +159,7 @@ func main() {
 		Client:     mgr.GetClient(),
 		Scheme:     mgr.GetScheme(),
 		RestConfig: mgr.GetConfig(),
+		ClientSet: clientset,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "forensicsnapshotchain")
 		os.Exit(1)
