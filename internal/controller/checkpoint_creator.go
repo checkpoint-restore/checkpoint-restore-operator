@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"net/http"
 	"time"
+	"encoding/json"
 
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -31,7 +32,7 @@ import (
 var checkpointRequestTimeout = 30 * time.Second
 
 type Checkpointer interface {
-	createCheckpoint(ctx context.Context, ns, podName, containerName, nodeName string) error
+	createCheckpoint(ctx context.Context, ns, podName, containerName, nodeName string) (string, error)
 }
 
 type CheckpointCreator struct {
@@ -45,7 +46,7 @@ func (cc *CheckpointCreator) createCheckpoint(
 	podName string,
 	containerName string,
 	nodeName string,
-) error {
+) (string, error) {
 	logger := log.FromContext(ctx)
 
 	url := cc.restConfig.Host + "/api/v1/nodes/" + nodeName + "/proxy/checkpoint/" + nameSpace + "/" + podName + "/" + containerName
@@ -53,27 +54,37 @@ func (cc *CheckpointCreator) createCheckpoint(
 
 	httpClient, err := rest.HTTPClientFor(cc.restConfig)
 	if err != nil {
-		return err
+		return "",err
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, checkpointRequestTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
 	if err != nil {
-		return err
+		return "",err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return err
+		return "",err
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("checkpoint failed for %s/%s/%s: status %d",
+		return "", fmt.Errorf("checkpoint failed for %s/%s/%s: status %d",
 			nameSpace, podName, containerName, resp.StatusCode)
 	}
-	return nil
+
+	var result struct {
+		Items []string `json:"items"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("failed to decode checkpoint response: %w", err)
+	}
+	if len(result.Items) == 0 {
+		return "", fmt.Errorf("checkpoint response contained no items")
+	}
+	return result.Items[0], nil
 }
 
 func NewCheckpointCreator(c client.Client, restConfig *rest.Config) *CheckpointCreator {

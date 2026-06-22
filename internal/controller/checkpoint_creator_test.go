@@ -41,6 +41,9 @@ var _ = Describe("CheckpointCreator", func() {
 			lastPath = r.URL.Path
 			lastMethod = r.Method
 			w.WriteHeader(statusCode)
+			if statusCode == http.StatusOK {
+				_, _ = w.Write([]byte(`{"items":["/var/lib/kubelet/checkpoints/checkpoint-pod_ns-container-1234.tar"]}`))
+			}
 		}))
 		creator = NewCheckpointCreator(nil, &rest.Config{Host: server.URL})
 	})
@@ -50,20 +53,20 @@ var _ = Describe("CheckpointCreator", func() {
 	})
 
 	It("POSTs to the correct kubelet checkpoint URL", func() {
-		err := creator.createCheckpoint(context.Background(), "default", "my-pod", "my-container", "my-node")
+		_,err := creator.createCheckpoint(context.Background(), "default", "my-pod", "my-container", "my-node")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(lastMethod).To(Equal(http.MethodPost))
 		Expect(lastPath).To(Equal("/api/v1/nodes/my-node/proxy/checkpoint/default/my-pod/my-container"))
 	})
 
 	It("returns nil on HTTP 200", func() {
-		err := creator.createCheckpoint(context.Background(), "ns", "pod", "ctr", "node")
+		_, err := creator.createCheckpoint(context.Background(), "ns", "pod", "ctr", "node")
 		Expect(err).NotTo(HaveOccurred())
 	})
 
 	It("returns an error on non-200 status", func() {
 		statusCode = http.StatusInternalServerError
-		err := creator.createCheckpoint(context.Background(), "ns", "pod", "ctr", "node")
+		_, err := creator.createCheckpoint(context.Background(), "ns", "pod", "ctr", "node")
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("checkpoint failed"))
 	})
@@ -83,7 +86,7 @@ var _ = Describe("CheckpointCreator request timeout", func() {
 
 		creator := NewCheckpointCreator(nil, &rest.Config{Host: server.URL})
 		start := time.Now()
-		err := creator.createCheckpoint(context.Background(), "ns", "pod", "ctr", "node")
+		_, err := creator.createCheckpoint(context.Background(), "ns", "pod", "ctr", "node")
 
 		Expect(err).To(HaveOccurred())
 		Expect(time.Since(start)).To(BeNumerically("<", 5*time.Second))
