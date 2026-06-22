@@ -43,11 +43,11 @@ type checkpointCall struct {
 	ns, pod, container, node string
 }
 
-func (m *mockCheckpointer) createCheckpoint(_ context.Context, ns, pod, container, node string) error {
+func (m *mockCheckpointer) createCheckpoint(_ context.Context, ns, pod, container, node string) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.calls = append(m.calls, checkpointCall{ns, pod, container, node})
-	return m.err
+	return "", m.err
 }
 
 func makeSchedule(containerNames []string, interval time.Duration) *v1.CheckpointSchedule {
