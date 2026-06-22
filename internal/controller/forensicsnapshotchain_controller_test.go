@@ -164,4 +164,40 @@ var _ = Describe("ForensicSnapshotChainReconciler", func() {
 		Expect(result).To(Equal(ctrl.Result{}))
 	})
 
+	It("should not fail when hashAlgorithm is empty", func() {
+		chain := &criuorgv1.ForensicSnapshotChain{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-chain",
+				Namespace: "default",
+			},
+			Spec: criuorgv1.ForensicSnapshotChainSpec{
+				Namespace: "default",
+				Selector:  metav1.LabelSelector{},
+				Capture:   criuorgv1.CaptureSpec{},
+				Integrity: criuorgv1.IntegritySpec{
+					HashAlgorithm: "",
+				},
+			},
+		}
+		chain.Status.Phase = criuorgv1.PhaseRunning
+	
+		reconciler := makeReconciler(chain)
+	
+		request := ctrl.Request{
+			NamespacedName: types.NamespacedName{
+				Name:      "test-chain",
+				Namespace: "default",
+			},
+		}
+	
+		_, err := reconciler.Reconcile(context.Background(), request)
+	
+		// no error — empty algorithm means hashing is simply skipped
+		Expect(err).ToNot(HaveOccurred())
+	
+		updatedChain := &criuorgv1.ForensicSnapshotChain{}
+		Expect(reconciler.Get(context.Background(), request.NamespacedName, updatedChain)).To(Succeed())
+		Expect(updatedChain.Status.Phase).ToNot(Equal(criuorgv1.PhaseFailed))
+	})
+
 })
