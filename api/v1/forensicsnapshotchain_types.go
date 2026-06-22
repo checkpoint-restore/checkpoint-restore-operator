@@ -62,6 +62,18 @@ const (
 	PostSnapshotActionDeletePod PostSnapshotAction = "DeletePod"
 )
 
+//Snapshot Record to keep track of all snapshots in a chain
+
+type SnapshotChainRecord struct {
+	Index int `json:"index"`
+	PodName string `json:"podName"`
+	ContainerName string `json:"containerName"`
+	CheckpointPath string `json:"checkpointPath"`
+	SnapshotTimestamp metav1.Time `json:"snapshotTimestamp"`
+	SHA256Hash string `json:"sha256Hash,omitempty"`
+	PreviousSHA256Hash string `json:"previousSHA256Hash,omitempty"`
+}
+
 // ForensicSnapshotChainSpec defines the desired state of ForensicSnapshotChain
 type ForensicSnapshotChainSpec struct {
 	// Namespace is the namespace containing the selected pods
@@ -95,6 +107,9 @@ type ForensicSnapshotChainStatus struct {
 	// Conditions represent the latest observations of the snapshot chain state.
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+	// SnapshotRecords is a list of snapshot records
+	// +optional
+	SnapshotChainRecords []SnapshotChainRecord `json:"snapshotChainRecords,omitempty"`
 }
 
 // +kubebuilder:object:root=true
