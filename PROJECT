@@ -19,4 +19,12 @@ resources:
   kind: CheckpointRestoreOperator
   path: github.com/checkpoint-restore/checkpoint-restore-operator/api/v1
   version: v1
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: criu.org
+  kind: ForensicSnapshotChain
+  path: github.com/checkpoint-restore/checkpoint-restore-operator/api/v1
+  version: v1
 version: "3"
