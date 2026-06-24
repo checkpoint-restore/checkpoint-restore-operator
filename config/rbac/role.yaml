@@ -25,6 +25,7 @@ rules:
   resources:
   - pods
   verbs:
+  - delete
   - get
   - list
   - patch
@@ -34,6 +35,7 @@ rules:
   resources:
   - checkpointrestoreoperators
   - checkpointschedules
+  - forensicsnapshotchains
   verbs:
   - create
   - delete
@@ -47,6 +49,7 @@ rules:
   resources:
   - checkpointrestoreoperators/finalizers
   - checkpointschedules/finalizers
+  - forensicsnapshotchains/finalizers
   verbs:
   - update
 - apiGroups:
@@ -54,6 +57,7 @@ rules:
   resources:
   - checkpointrestoreoperators/status
   - checkpointschedules/status
+  - forensicsnapshotchains/status
   verbs:
   - get
   - patch
