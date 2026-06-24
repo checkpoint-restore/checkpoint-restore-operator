@@ -1,0 +1,14 @@
+apiVersion: criu.org/v1
+kind: ForensicSnapshotChain
+metadata:
+  name: delete-pod-test
+spec:
+  namespace: default
+  selector:
+    matchLabels:
+      app: nginx
+  capture:
+    interval: 5s
+    maxSnapshots: 3
+
+  postSnapshotAction: DeletePod
