@@ -4,6 +4,7 @@
 resources:
 - bases/criu.org_checkpointrestoreoperators.yaml
 - bases/criu.org_checkpointschedules.yaml
+- bases/criu.org_forensicsnapshotchains.yaml
 #+kubebuilder:scaffold:crdkustomizeresource
 
 patches:
