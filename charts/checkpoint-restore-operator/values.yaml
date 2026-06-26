@@ -1,0 +1,54 @@
+replicaCount: 1
+
+image:
+  repository: ghcr.io/checkpoint-restore/checkpoint-restore-operator
+  tag: latest
+  pullPolicy: IfNotPresent
+
+leaderElection:
+  enabled: true
+
+checkpointDir:
+  hostPath: /var/lib/kubelet/checkpoints
+
+serviceAccount:
+  create: true
+  name: ""
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 128Mi
+  requests:
+    cpu: 10m
+    memory: 64Mi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+securityContext:
+  runAsUser: 0
+  allowPrivilegeEscalation: true
+  dropAllCapabilities: true
+  addCapabilities:
+    - DAC_OVERRIDE
+    - FOWNER
+
+metrics:
+  enabled: true
+
+proxy:
+  image: gcr.io/kubebuilder/kube-rbac-proxy:v0.14.1
+  resources:
+    limits:
+      cpu: 500m
+      memory: 128Mi
+    requests:
+      cpu: 5m
+      memory: 64Mi
+
+manager:
+  healthProbeBindAddress: ":8081"
+  metricsBindAddress: "127.0.0.1:8080"
+

@@ -1,0 +1,7 @@
+apiVersion: v2
+name: checkpoint-restore-operator
+description: Kubernetes operator for CRIU checkpoint/restore
+type: application
+version: 0.1.0
+appVersion: "0.0.0"
+
