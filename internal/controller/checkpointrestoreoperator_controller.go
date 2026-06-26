@@ -124,6 +124,9 @@ func (r *CheckpointRestoreOperatorReconciler) Reconcile(ctx context.Context, req
 }
 
 func resetAllPoliciesToDefault(log logr.Logger) {
+	policyMutex.Lock()
+	defer policyMutex.Unlock()
+
 	retainOrphan = nil
 	maxCheckpointsPerContainer = 10
 	maxCheckpointsPerPod = 20
@@ -358,9 +361,6 @@ type Policy struct {
 }
 
 func applyPolicies(log logr.Logger, details *checkpointDetails) {
-	policyMutex.Lock()
-	defer policyMutex.Unlock()
-
 	// Function to handle default "infinity" value for count-based policies
 	toInfinityCount := func(value *int) int {
 		if value == nil {
@@ -406,6 +406,8 @@ func applyPolicies(log logr.Logger, details *checkpointDetails) {
 			MaxTotalSize:      toInfinitySize(policy.MaxTotalSize),
 		})
 	} else {
+		policyMutex.RLock()
+
 		// Apply global policies if no specific policy found
 		handleCheckpointsForLevel(log, details, "container", Policy{
 			RetainOrphan:      *retainOrphan,
@@ -425,10 +427,15 @@ func applyPolicies(log logr.Logger, details *checkpointDetails) {
 			MaxCheckpointSize: maxCheckpointSize,
 			MaxTotalSize:      maxTotalSizePerNamespace,
 		})
+
+		policyMutex.RUnlock()
 	}
 }
 
 func findContainerPolicy(details *checkpointDetails) *criuorgv1.ContainerPolicySpec {
+	policyMutex.RLock()
+	defer policyMutex.RUnlock()
+
 	for _, policy := range containerPolicies {
 		if policy.Namespace == details.namespace && policy.Pod == details.pod && policy.Container == details.container {
 			return &policy
@@ -438,6 +445,9 @@ func findContainerPolicy(details *checkpointDetails) *criuorgv1.ContainerPolicyS
 }
 
 func findPodPolicy(details *checkpointDetails) *criuorgv1.PodPolicySpec {
+	policyMutex.RLock()
+	defer policyMutex.RUnlock()
+
 	for _, policy := range podPolicies {
 		if policy.Namespace == details.namespace && policy.Pod == details.pod {
 			return &policy
@@ -447,6 +457,9 @@ func findPodPolicy(details *checkpointDetails) *criuorgv1.PodPolicySpec {
 }
 
 func findNamespacePolicy(details *checkpointDetails) *criuorgv1.NamespacePolicySpec {
+	policyMutex.RLock()
+	defer policyMutex.RUnlock()
+
 	for _, policy := range namespacePolicies {
 		if policy.Namespace == details.namespace {
 			return &policy
@@ -518,6 +531,9 @@ func handleCheckpointsForLevel(log logr.Logger, details *checkpointDetails, leve
 		return
 	}
 
+	// Read Lock for checkpointDirectory
+	policyMutex.RLock()
+
 	var globPattern string
 	switch level {
 	case "container":
@@ -548,6 +564,9 @@ func handleCheckpointsForLevel(log logr.Logger, details *checkpointDetails, leve
 			),
 		)
 	}
+
+	// Removing RLock for checkpointDirectory
+	policyMutex.RUnlock()
 
 	checkpointArchives, err := filepath.Glob(globPattern)
 	if err != nil {
@@ -1038,6 +1057,8 @@ func (gc *garbageCollector) runGarbageCollector() {
 		}
 	}()
 
+	policyMutex.RLock()
+
 	// Add a path.
 	log.Info("Watching", "directory", checkpointDirectory)
 	log.Info("MaxCheckpointsPerContainer", "maxCheckpointsPerContainer", maxCheckpointsPerContainer)
@@ -1047,6 +1068,8 @@ func (gc *garbageCollector) runGarbageCollector() {
 	log.Info("MaxTotalSizePerNamespace", "maxTotalSizePerNamespace", maxTotalSizePerNamespace)
 	log.Info("MaxTotalSizePerPod", "maxTotalSizePerPod", maxTotalSizePerPod)
 	log.Info("MaxTotalSizePerContainer", "maxTotalSizePerContainer", maxTotalSizePerContainer)
+
+	policyMutex.RUnlock()
 
 	err = watcher.Add(checkpointDirectory)
 	if err != nil {
