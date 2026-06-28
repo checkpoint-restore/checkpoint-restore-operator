@@ -133,10 +133,10 @@ func main() {
 		setupLog.Error(err, "unable to start manager")
 		os.Exit(1)
 	}
-	
+
 	clientset, err := kubernetes.NewForConfig(mgr.GetConfig())
 	if err != nil {
-    	setupLog.Error(err, "unable to create kubernetes clientset")
+		setupLog.Error(err, "unable to create kubernetes clientset")
 		os.Exit(1)
 	}
 
@@ -159,7 +159,7 @@ func main() {
 		Client:     mgr.GetClient(),
 		Scheme:     mgr.GetScheme(),
 		RestConfig: mgr.GetConfig(),
-		ClientSet: clientset,
+		ClientSet:  clientset,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "forensicsnapshotchain")
 		os.Exit(1)

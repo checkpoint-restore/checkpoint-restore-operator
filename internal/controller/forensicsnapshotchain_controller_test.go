@@ -180,24 +180,59 @@ var _ = Describe("ForensicSnapshotChainReconciler", func() {
 			},
 		}
 		chain.Status.Phase = criuorgv1.PhaseRunning
-	
+
 		reconciler := makeReconciler(chain)
-	
+
 		request := ctrl.Request{
 			NamespacedName: types.NamespacedName{
 				Name:      "test-chain",
 				Namespace: "default",
 			},
 		}
-	
+
 		_, err := reconciler.Reconcile(context.Background(), request)
-	
-		// no error — empty algorithm means hashing is simply skipped
-		Expect(err).ToNot(HaveOccurred())
-	
+
+		Expect(err).NotTo(HaveOccurred())
+
 		updatedChain := &criuorgv1.ForensicSnapshotChain{}
 		Expect(reconciler.Get(context.Background(), request.NamespacedName, updatedChain)).To(Succeed())
 		Expect(updatedChain.Status.Phase).ToNot(Equal(criuorgv1.PhaseFailed))
+	})
+
+	It("should fail when hashAlgorithm is unsupported", func() {
+		chain := &criuorgv1.ForensicSnapshotChain{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-chain-invalid-hash",
+				Namespace: "default",
+			},
+			Spec: criuorgv1.ForensicSnapshotChainSpec{
+				Namespace: "default",
+				Selector:  metav1.LabelSelector{},
+				Capture:   criuorgv1.CaptureSpec{},
+				Integrity: criuorgv1.IntegritySpec{
+					HashAlgorithm: "md5",
+				},
+			},
+		}
+		chain.Status.Phase = criuorgv1.PhaseRunning
+
+		reconciler := makeReconciler(chain)
+
+		request := ctrl.Request{
+			NamespacedName: types.NamespacedName{
+				Name:      "test-chain-invalid-hash",
+				Namespace: "default",
+			},
+		}
+
+		_, err := reconciler.Reconcile(context.Background(), request)
+
+		Expect(err).To(HaveOccurred())
+
+		updatedChain := &criuorgv1.ForensicSnapshotChain{}
+		Expect(reconciler.Get(context.Background(), request.NamespacedName, updatedChain)).To(Succeed())
+		Expect(updatedChain.Status.Phase).To(Equal(criuorgv1.PhaseFailed))
+		Expect(updatedChain.Status.ErrorMessage).To(ContainSubstring("md5"))
 	})
 
 })

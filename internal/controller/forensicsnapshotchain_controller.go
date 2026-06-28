@@ -18,22 +18,20 @@ package controller
 
 import (
 	"context"
-	"time"
 	"fmt"
+	"time"
 
 	meta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/rest"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	corev1 "k8s.io/api/core/v1"
-
-
 
 	criuorgv1 "github.com/checkpoint-restore/checkpoint-restore-operator/api/v1"
 )
@@ -46,7 +44,7 @@ type ForensicSnapshotChainReconciler struct {
 	client.Client
 
 	ClientSet *kubernetes.Clientset
-	Scheme *runtime.Scheme
+	Scheme    *runtime.Scheme
 
 	RestConfig *rest.Config
 }
@@ -156,10 +154,10 @@ func (r *ForensicSnapshotChainReconciler) Reconcile(ctx context.Context, req ctr
 			meta.SetStatusCondition(
 				&chain.Status.Conditions,
 				metav1.Condition{
-					Type:               "Ready",
-					Status:             metav1.ConditionFalse,
-					Reason:             "Failed",
-					Message:            fmt.Sprintf("unsupported hash algorithm: %s", chain.Spec.Integrity.HashAlgorithm),
+					Type:    "Ready",
+					Status:  metav1.ConditionFalse,
+					Reason:  "Failed",
+					Message: fmt.Sprintf("unsupported hash algorithm: %s", chain.Spec.Integrity.HashAlgorithm),
 				},
 			)
 
@@ -168,10 +166,8 @@ func (r *ForensicSnapshotChainReconciler) Reconcile(ctx context.Context, req ctr
 			return ctrl.Result{}, fmt.Errorf("unsupported hash algorithm: %s", chain.Spec.Integrity.HashAlgorithm)
 		}
 
-
 		hashingEnabled := chain.Spec.Integrity.HashAlgorithm == "sha256"
-		
-		
+
 		//creating checkpoints
 		creator := NewCheckpointCreator(
 			r.Client,
@@ -245,8 +241,6 @@ func (r *ForensicSnapshotChainReconciler) Reconcile(ctx context.Context, req ctr
 				}
 			}
 
-		
-
 			for _, container := range containers {
 
 				checkpointPath, err := creator.createCheckpoint(
@@ -277,16 +271,15 @@ func (r *ForensicSnapshotChainReconciler) Reconcile(ctx context.Context, req ctr
 					return ctrl.Result{}, err
 				}
 
-				
 				record := criuorgv1.SnapshotChainRecord{
-					Index: chain.Status.SnapshotCount,
-					PodName: pod.Name,
-					ContainerName: container.Name,
+					Index:             chain.Status.SnapshotCount,
+					PodName:           pod.Name,
+					ContainerName:     container.Name,
 					SnapshotTimestamp: metav1.Now(),
-					CheckpointPath: checkpointPath,
+					CheckpointPath:    checkpointPath,
 				}
 				if hashingEnabled {
-					hash, hashErr :=computeChecksum(ctx, r.Client, r.ClientSet, chain.Spec.Namespace, pod.Spec.NodeName, checkpointPath)
+					hash, hashErr := computeChecksum(ctx, r.Client, r.ClientSet, chain.Spec.Namespace, pod.Spec.NodeName, checkpointPath)
 					if hashErr != nil {
 						log.Error(hashErr, "Failed to compute checksum")
 						meta.SetStatusCondition(&chain.Status.Conditions, metav1.Condition{
@@ -296,7 +289,7 @@ func (r *ForensicSnapshotChainReconciler) Reconcile(ctx context.Context, req ctr
 							Message:            fmt.Sprintf("snapshot %d: %s", record.Index, hashErr.Error()),
 							LastTransitionTime: metav1.Now(),
 						})
-					} else{
+					} else {
 						record.PreviousSHA256Hash = previousHash
 						previousHash = hash
 						record.SHA256Hash = hash
@@ -311,7 +304,7 @@ func (r *ForensicSnapshotChainReconciler) Reconcile(ctx context.Context, req ctr
 				}
 
 				chain.Status.SnapshotChainRecords = append(chain.Status.SnapshotChainRecords, record)
-				
+
 				//this counts the number of checkpoint files created
 				chain.Status.SnapshotCount++
 
