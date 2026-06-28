@@ -252,7 +252,7 @@ func (r *ForensicSnapshotChainReconciler) Reconcile(ctx context.Context, req ctr
 		captured := 0
 		for _, pod := range pods {
 			for _, container := range filterContainers(pod, chain.Spec.ContainerNames) {
-				if err := creator.createCheckpoint(
+				if _, err := creator.createCheckpoint(
 					ctx,
 					chain.Spec.Namespace,
 					pod.Name,

@@ -69,7 +69,7 @@ func (at *AnnotationTrigger) run(ctx context.Context) {
 
 		failed := false
 		for _, c := range filterContainers(pod, at.schedule.Spec.ContainerNames) {
-			if err := at.creator.createCheckpoint(ctx, pod.Namespace, pod.Name, c.Name, pod.Spec.NodeName); err != nil {
+			if _, err := at.creator.createCheckpoint(ctx, pod.Namespace, pod.Name, c.Name, pod.Spec.NodeName); err != nil {
 				logger.Error(err, "annotation trigger: checkpoint failed", "pod", pod.Name, "container", c.Name)
 				failed = true
 			}
