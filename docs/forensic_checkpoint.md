@@ -46,7 +46,10 @@ The operator will repeatedly create checkpoints of the selected container every 
     
 - 5 minutes have elapsed since the chain started.
 
-Once the chain reaches `Completed`, the configured `postSnapshotAction` runs exactly once. But note, the evidence is preserved.
+Once the chain reaches Completed, the configured postSnapshotAction runs exactly once. Checkpoint archives remain on the node even when DeletePod is configured; a post-snapshot action failure is logged but does not move the chain to Failed.
+
+If the integrity spec is specified, we can form a forensic chain of snapshots with each snapshot having a parent and a self hash. For now, sha256 is only supported
+for the baseline.
     
 
 ## Spec Reference
@@ -77,7 +80,15 @@ kubectl explain forensicsnapshotchain.spec
 
 ### Integrity
 
-- `hashAlgorithm` (string): reserved for future integrity verification support. Yet to be added.
+- `hashAlgorithm` (string): algorithm to be used to generate and create a forensic snapshot chain for each checkpoint
+
+- Hashes are computed via a short-lived helper pod on the target node with read-only access to /var/lib/kubelet/checkpoints
+
+- Each entry in snapshotChainRecords includes sha256Hash, checkpointPath, and previousSHA256Hash (link to the prior snapshot’s hash)
+
+- IntegrityVerified condition reports hash success/failure
+
+- Hash failures do not fail the chain — capture continues; only the condition reflects the problem
     
 
 ## Snapshot Chain Lifecycle
@@ -138,6 +149,10 @@ The chain has successfully finished because one of the configured completion con
 ### Failed
 
 The operator encountered an error while creating checkpoints.
+For example;
+- Unsupported hashAlgorithm → Failed
+- Kubelet/checkpoint creation errors → Failed
+- postSnapshotAction does not run on Failed
 
 ## Observing
 
@@ -165,7 +180,7 @@ The current implementation creates full checkpoints for every capture operation.
 
 The following features are planned for future releases:
 
-- Integrity verification and hash validation
+- Additional hash algorithms beyond SHA-256
     
 - Incremental checkpointing
     
