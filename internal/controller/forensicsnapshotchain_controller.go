@@ -18,11 +18,13 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	meta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/util/retry"
 
@@ -55,6 +57,8 @@ type ForensicSnapshotChainReconciler struct {
 
 	// RestConfig is used to reach the kubelet checkpoint API.
 	RestConfig *rest.Config
+	// ClientSet reads helper pod logs when computing checkpoint checksums.
+	ClientSet *kubernetes.Clientset
 	// Checkpointer overrides the default kubelet-proxy checkpoint creator;
 	// used by tests.
 	Checkpointer Checkpointer
@@ -70,7 +74,8 @@ func (r *ForensicSnapshotChainReconciler) checkpointer() Checkpointer {
 // +kubebuilder:rbac:groups=criu.org,resources=forensicsnapshotchains,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=criu.org,resources=forensicsnapshotchains/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=criu.org,resources=forensicsnapshotchains/finalizers,verbs=update
-// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;delete
+// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;create;delete
+// +kubebuilder:rbac:groups="",resources=pods/log,verbs=get
 
 // Reconcile drives a ForensicSnapshotChain through its phase state machine
 // ("" -> Pending -> Running -> Completed/Failed), creating a round of container
@@ -169,6 +174,34 @@ func (r *ForensicSnapshotChainReconciler) Reconcile(ctx context.Context, req ctr
 	// If the phase is running, we create one round of checkpoints per reconcile
 	// until a stop condition (maxDuration or maxSnapshots) is reached.
 	if chain.Status.Phase == criuorgv1.PhaseRunning {
+		// Integrity configuration is validated once per reconcile, before any
+		// capture work. An unsupported hash algorithm is a permanent
+		// misconfiguration, so the chain moves to Failed and the error is
+		// returned. An empty algorithm disables hashing; "sha256" enables it.
+		if chain.Spec.Integrity.HashAlgorithm != "" && chain.Spec.Integrity.HashAlgorithm != "sha256" {
+			algoErr := fmt.Errorf("unsupported hash algorithm: %s", chain.Spec.Integrity.HashAlgorithm)
+			if err := r.updateChainStatus(ctx, chain, func(latest *criuorgv1.ForensicSnapshotChain) {
+				latest.Status.Phase = criuorgv1.PhaseFailed
+				latest.Status.ErrorMessage = algoErr.Error()
+				failNow := metav1.Now()
+				latest.Status.CompletionTime = &failNow
+				meta.SetStatusCondition(
+					&latest.Status.Conditions,
+					metav1.Condition{
+						Type:               "Ready",
+						Status:             metav1.ConditionFalse,
+						Reason:             "Failed",
+						Message:            algoErr.Error(),
+						LastTransitionTime: metav1.Now(),
+					},
+				)
+			}); err != nil {
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{}, algoErr
+		}
+		hashingEnabled := chain.Spec.Integrity.HashAlgorithm == "sha256"
+
 		// MaxDuration backstop. Checked once per reconcile, before the capture
 		// round and independent of how many pods match, so an idle or
 		// mis-targeted chain still terminates.
@@ -250,15 +283,28 @@ func (r *ForensicSnapshotChainReconciler) Reconcile(ctx context.Context, req ctr
 		// work is acceptable (each checkpoint is an independent archive).
 		creator := r.checkpointer()
 		captured := 0
+
+		// Records captured this round, persisted together with the round's
+		// status update. previousHash seeds the tamper-evident chain from the
+		// last persisted record so a new record links to it.
+		var newRecords []criuorgv1.SnapshotChainRecord
+		integrityFailed := false
+		integrityMessage := ""
+		previousHash := ""
+		if n := len(chain.Status.SnapshotChainRecords); n > 0 {
+			previousHash = chain.Status.SnapshotChainRecords[n-1].SHA256Hash
+		}
+
 		for _, pod := range pods {
 			for _, container := range filterContainers(pod, chain.Spec.ContainerNames) {
-				if _, err := creator.createCheckpoint(
+				checkpointPath, err := creator.createCheckpoint(
 					ctx,
 					chain.Spec.Namespace,
 					pod.Name,
 					container.Name,
 					pod.Spec.NodeName,
-				); err != nil {
+				)
+				if err != nil {
 					// A checkpoint error is treated as transient by default: the
 					// chain stays Running and the reconcile is retried with
 					// rate-limited backoff. A single flaky kubelet response must
@@ -314,6 +360,28 @@ func (r *ForensicSnapshotChainReconciler) Reconcile(ctx context.Context, req ctr
 				}
 
 				captured++
+
+				record := criuorgv1.SnapshotChainRecord{
+					Index:          int32(len(chain.Status.SnapshotChainRecords) + len(newRecords)),
+					PodName:        pod.Name,
+					ContainerName:  container.Name,
+					SnapshotTime:   metav1.Now(),
+					CheckpointPath: checkpointPath,
+				}
+				if hashingEnabled {
+					hash, hashErr := computeChecksum(ctx, r.Client, r.ClientSet, chain.Spec.Namespace, pod.Spec.NodeName, checkpointPath)
+					if hashErr != nil {
+						log.Error(hashErr, "Failed to compute checksum")
+						integrityFailed = true
+						integrityMessage = fmt.Sprintf("snapshot %d: %s", record.Index, hashErr.Error())
+					} else {
+						record.PreviousSHA256Hash = previousHash
+						previousHash = hash
+						record.SHA256Hash = hash
+					}
+				}
+				newRecords = append(newRecords, record)
+
 				log.Info(
 					"Checkpoint created",
 					"pod", pod.Name,
@@ -385,6 +453,7 @@ func (r *ForensicSnapshotChainReconciler) Reconcile(ctx context.Context, req ctr
 						LastTransitionTime: metav1.Now(),
 					},
 				)
+				appendRoundRecords(latest, newRecords, hashingEnabled, integrityFailed, integrityMessage)
 			}); err != nil {
 				return ctrl.Result{}, err
 			}
@@ -426,6 +495,7 @@ func (r *ForensicSnapshotChainReconciler) Reconcile(ctx context.Context, req ctr
 					)
 				}
 			}
+			appendRoundRecords(latest, newRecords, hashingEnabled, integrityFailed, integrityMessage)
 		}); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -440,6 +510,41 @@ func (r *ForensicSnapshotChainReconciler) Reconcile(ctx context.Context, req ctr
 	// silently looping; a corrected status arrives as a new watch event.
 	log.Info("Unrecognized phase, taking no action", "phase", chain.Status.Phase)
 	return ctrl.Result{}, nil
+}
+
+// appendRoundRecords persists the records captured in a round onto the latest
+// status and, when hashing is enabled, records the round's integrity outcome
+// as an IntegrityVerified condition. A hash failure is surfaced through the
+// condition without failing the whole chain, so forensic evidence collected in
+// the round is preserved. It is a no-op when no records were captured.
+func appendRoundRecords(
+	latest *criuorgv1.ForensicSnapshotChain,
+	records []criuorgv1.SnapshotChainRecord,
+	hashingEnabled bool,
+	integrityFailed bool,
+	integrityMessage string,
+) {
+	if len(records) == 0 {
+		return
+	}
+	latest.Status.SnapshotChainRecords = append(latest.Status.SnapshotChainRecords, records...)
+	if !hashingEnabled {
+		return
+	}
+	cond := metav1.Condition{
+		Type:               "IntegrityVerified",
+		LastTransitionTime: metav1.Now(),
+	}
+	if integrityFailed {
+		cond.Status = metav1.ConditionFalse
+		cond.Reason = "HashGenerationFailed"
+		cond.Message = integrityMessage
+	} else {
+		cond.Status = metav1.ConditionTrue
+		cond.Reason = "HashGenerationSucceeded"
+		cond.Message = "all snapshots successfully hashed"
+	}
+	meta.SetStatusCondition(&latest.Status.Conditions, cond)
 }
 
 // SetupWithManager sets up the controller with the Manager.
