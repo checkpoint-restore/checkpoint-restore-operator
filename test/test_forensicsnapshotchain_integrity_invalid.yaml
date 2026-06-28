@@ -1,0 +1,15 @@
+apiVersion: criu.org/v1
+kind: ForensicSnapshotChain
+metadata:
+  name: integrity-invalid-test
+spec:
+  namespace: default
+  selector:
+    matchLabels:
+      app: nginx
+  capture:
+    interval: 5s
+    maxSnapshots: 1
+  integrity:
+    hashAlgorithm: md5
+    

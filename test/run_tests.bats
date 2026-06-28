@@ -43,6 +43,37 @@ function operator_logs() {
   fi
 }
 
+# Deploy a nginx pod for FSC tests
+fsc_deploy_nginx_pod() {
+  local pod_name=$1
+  log_and_run kubectl run "$pod_name" --image=nginx --restart=Never --labels=app=nginx
+  log_and_run kubectl wait --for=condition=Ready --timeout=120s "pod/$pod_name"
+}
+
+# Wait until ForensicSnapshotChain reaches expected phase
+fsc_wait_for_phase() {
+  local name=$1
+  local expected=$2
+  local attempts=${3:-60}
+  local sleep_secs=${4:-5}
+  local phase=""
+  for _ in $(seq 1 "$attempts"); do
+    phase=$(kubectl get forensicsnapshotchain "$name" -o jsonpath='{.status.phase}' 2>/dev/null || true)
+    [ "$phase" = "$expected" ] && break
+    sleep "$sleep_secs"
+  done
+  echo "fsc $name phase: $phase (expected $expected)" >&2
+  [ "$phase" = "$expected" ]
+}
+
+# Cleanup FSC CR and pod
+fsc_cleanup() {
+  local yaml=$1
+  local pod=$2
+  log_and_run kubectl delete -f "$yaml" --ignore-not-found=true
+  log_and_run kubectl delete pod "$pod" --ignore-not-found=true --timeout=60s
+}
+
 @test "test_garbage_collection" {
   log_and_run ls -la "$CHECKPOINT_DIR"
   [ "$status" -eq 0 ]
@@ -230,4 +261,90 @@ function operator_logs() {
   log_and_run kubectl delete -f ./test/test_checkpointschedule_events.yaml
   log_and_run kubectl delete -f ./test/test_checkpointschedule_pod.yaml
   [ -n "$found" ]
+}
+
+
+@test "test_forensicsnapshotchain_max_snapshots" {
+  fsc_deploy_nginx_pod fsc-maxsnap-nginx
+  log_and_run kubectl apply -f ./test/test_forensicsnapshotchain_maxsnapshots.yaml
+  fsc_wait_for_phase max-snapshots-test Completed
+
+  count=$(kubectl get forensicsnapshotchain max-snapshots-test -o jsonpath='{.status.snapshotCount}')
+  echo "snapshotCount: $count" >&2
+  [ "$count" -eq 3 ]
+
+  reason=$(kubectl get forensicsnapshotchain max-snapshots-test -o jsonpath='{.status.conditions[?(@.type=="Ready")].reason}')
+  [ "$reason" = "MaxSnapshotsReached" ]
+
+  fsc_cleanup ./test/test_forensicsnapshotchain_maxsnapshots.yaml fsc-maxsnap-nginx
+}
+
+@test "test_forensicsnapshotchain_max_duration" {
+  fsc_deploy_nginx_pod fsc-maxdur-nginx
+  log_and_run kubectl apply -f ./test/test_forensicsnapshotchain_maxduration.yaml
+  fsc_wait_for_phase max-duration-test Completed 30 5
+
+  reason=$(kubectl get forensicsnapshotchain max-duration-test -o jsonpath='{.status.conditions[?(@.type=="Ready")].reason}')
+  [ "$reason" = "MaxDurationReached" ]
+
+  fsc_cleanup ./test/test_forensicsnapshotchain_maxduration.yaml fsc-maxdur-nginx
+}
+
+@test "test_forensicsnapshotchain_default_interval" {
+  fsc_deploy_nginx_pod fsc-interval-nginx
+  log_and_run kubectl apply -f ./test/test_forensicsnapshotchain_default_interval.yaml
+  fsc_wait_for_phase default-interval-test Completed 90 5
+
+  count=$(kubectl get forensicsnapshotchain default-interval-test -o jsonpath='{.status.snapshotCount}')
+  [ "$count" -eq 5 ]
+
+  fsc_cleanup ./test/test_forensicsnapshotchain_default_interval.yaml fsc-interval-nginx
+}
+
+@test "test_forensicsnapshotchain_post_snapshot_delete_pod" {
+  fsc_deploy_nginx_pod fsc-delete-nginx
+  log_and_run kubectl apply -f ./test/test_forensicsnapshotchain_postsnapshotaction_deletepod.yaml
+  fsc_wait_for_phase max-snapshots-test Completed
+
+  # Pod should be gone after chain completes
+  run kubectl get pod fsc-delete-nginx
+  [ "$status" -ne 0 ]
+
+  fsc_cleanup ./test/test_forensicsnapshotchain_postsnapshotaction_deletepod.yaml fsc-delete-nginx
+}
+
+@test "test_forensicsnapshotchain_integrity" {
+  fsc_deploy_nginx_pod integrity-nginx
+  log_and_run kubectl apply -f ./test/test_forensicsnapshotchain_integrity.yaml
+  fsc_wait_for_phase integrity-test Completed
+
+  count=$(kubectl get forensicsnapshotchain integrity-test -o jsonpath='{.status.snapshotCount}')
+  echo "snapshotCount: $count" >&2
+  [ "$count" -ge 1 ]
+
+  hash=$(kubectl get forensicsnapshotchain integrity-test -o jsonpath='{.status.snapshotChainRecords[0].sha256Hash}')
+  [ -n "$hash" ]
+  [ "${#hash}" -eq 64 ]   
+
+  integrity=$(kubectl get forensicsnapshotchain integrity-test -o jsonpath='{.status.conditions[?(@.type=="IntegrityVerified")].status}')
+  [ "$integrity" = "True" ]
+
+  if [ "$count" -ge 2 ]; then
+    prev=$(kubectl get forensicsnapshotchain integrity-test -o jsonpath='{.status.snapshotChainRecords[1].previousSHA256Hash}')
+    first=$(kubectl get forensicsnapshotchain integrity-test -o jsonpath='{.status.snapshotChainRecords[0].sha256Hash}')
+    [ "$prev" = "$first" ]
+  fi
+
+  fsc_cleanup ./test/test_forensicsnapshotchain_integrity.yaml integrity-nginx
+}
+
+@test "test_forensicsnapshotchain_integrity_unsupported_algorithm" {
+  fsc_deploy_nginx_pod integrity-invalid-nginx
+  log_and_run kubectl apply -f ./test/test_forensicsnapshotchain_integrity_invalid.yaml
+  fsc_wait_for_phase integrity-invalid-test Failed 12 5
+
+  msg=$(kubectl get forensicsnapshotchain integrity-invalid-test -o jsonpath='{.status.errorMessage}')
+  [[ "$msg" == *"md5"* ]]
+
+  fsc_cleanup ./test/test_forensicsnapshotchain_integrity_invalid.yaml integrity-invalid-nginx
 }
