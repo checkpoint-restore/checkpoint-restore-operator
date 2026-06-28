@@ -78,7 +78,9 @@ func computeChecksum(ctx context.Context, c client.Client, clientSet *kubernetes
 	}
 
 	//always delete the helper pod once chaincreation is done
-	defer c.Delete(ctx, helperPod)
+	defer func() {
+		_ = c.Delete(ctx, helperPod)
+	}()
 
 	//wait for the helper pod to complete
 	// the 30 is really random, but it's a good enough timeout for the helper pod to complete
@@ -111,7 +113,9 @@ func computeChecksum(ctx context.Context, c client.Client, clientSet *kubernetes
 	if err != nil {
 		return "", fmt.Errorf("stream helper pod logs: %w", err)
 	}
-	defer stream.Close()
+	defer func() {
+		 _ = stream.Close() 
+	}()
 
 	return parseSHA256FromLogs(stream)
 }
