@@ -1,30 +1,43 @@
 package controller
 
 import (
+	"bufio"
 	"context"
-	"bufio"	
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
-
 	corev1 "k8s.io/api/core/v1"
-    metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-    "k8s.io/apimachinery/pkg/types"
-    "k8s.io/client-go/kubernetes"
-    "sigs.k8s.io/controller-runtime/pkg/client"
-
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+func parseSHA256FromLogs(r io.Reader) (string, error) {
+	scanner := bufio.NewScanner(r)
+	for scanner.Scan() {
+		fields := strings.Fields(strings.TrimSpace(scanner.Text()))
+		if len(fields) >= 2 {
+			return fields[0], nil
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return "", fmt.Errorf("error reading checksum helper pod logs: %w", err)
+	}
+	return "", fmt.Errorf("no output from helper pod")
+}
+
 func computeChecksum(ctx context.Context, c client.Client, clientSet *kubernetes.Clientset, namespace string, nodeName string, snapshotPath string) (string, error) {
-	
+
 	helperPodName := "checksum-helper-" + fmt.Sprintf("%d", time.Now().UnixNano())
 	hostPathType := corev1.HostPathDirectory
 
 	//define helper pod spec
 	helperPod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: helperPodName,
+			Name:      helperPodName,
 			Namespace: namespace,
 		},
 		Spec: corev1.PodSpec{
@@ -57,11 +70,10 @@ func computeChecksum(ctx context.Context, c client.Client, clientSet *kubernetes
 			},
 		},
 	}
-	
-	
 
 	//create the helper pod
-	err := c.Create(ctx, helperPod); if err != nil {
+	err := c.Create(ctx, helperPod)
+	if err != nil {
 		return "", fmt.Errorf("failed to create helper pod: %w", err)
 	}
 
@@ -96,20 +108,10 @@ func computeChecksum(ctx context.Context, c client.Client, clientSet *kubernetes
 
 	req := clientSet.CoreV1().Pods(namespace).GetLogs(helperPodName, &corev1.PodLogOptions{})
 	stream, err := req.Stream(ctx)
-    if err != nil {
-        return "", fmt.Errorf("stream helper pod logs: %w", err)
-    }
-    defer stream.Close()
+	if err != nil {
+		return "", fmt.Errorf("stream helper pod logs: %w", err)
+	}
+	defer stream.Close()
 
-
-	//parse the logs to get the hash output
-	scanner := bufio.NewScanner(stream)
-    for scanner.Scan() {
-        fields := strings.Fields(scanner.Text())
-        if len(fields) >= 2 {
-            return fields[0], nil // first field is the hash
-        }
-    }
-    return "", fmt.Errorf("no output from helper pod")
-
+	return parseSHA256FromLogs(stream)
 }
