@@ -55,7 +55,7 @@ var _ = Describe("CheckpointCreator", func() {
 	})
 
 	It("POSTs to the correct kubelet checkpoint URL", func() {
-		_,err := creator.createCheckpoint(context.Background(), "default", "my-pod", "my-container", "my-node")
+		_, err := creator.createCheckpoint(context.Background(), "default", "my-pod", "my-container", "my-node")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(lastMethod).To(Equal(http.MethodPost))
 		Expect(lastPath).To(Equal("/api/v1/nodes/my-node/proxy/checkpoint/default/my-pod/my-container"))
@@ -81,7 +81,7 @@ var _ = Describe("CheckpointCreator", func() {
 		}))
 		creator = NewCheckpointCreator(nil, &rest.Config{Host: server.URL})
 
-		err := creator.createCheckpoint(context.Background(), "ns", "pod", "ctr", "node")
+		_, err := creator.createCheckpoint(context.Background(), "ns", "pod", "ctr", "node")
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("status 500"))
 		Expect(err.Error()).To(ContainSubstring("runtime checkpoint support is disabled"))
@@ -97,6 +97,7 @@ var _ = Describe("CheckpointCreator", func() {
 				return
 			}
 			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"items":["/var/lib/kubelet/checkpoints/checkpoint-pod_ns-container-1234.tar"]}`))
 		}))
 		creator = NewCheckpointCreator(nil, &rest.Config{Host: server.URL})
 
@@ -104,7 +105,7 @@ var _ = Describe("CheckpointCreator", func() {
 		checkpointRetryDelay = time.Millisecond
 		defer func() { checkpointRetryDelay = origDelay }()
 
-		err := creator.createCheckpoint(context.Background(), "ns", "pod", "ctr", "node")
+		_, err := creator.createCheckpoint(context.Background(), "ns", "pod", "ctr", "node")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(atomic.LoadInt32(&calls)).To(Equal(int32(2)))
 	})
@@ -124,15 +125,18 @@ var _ = Describe("CheckpointCreator", func() {
 			time.Sleep(20 * time.Millisecond)
 			atomic.AddInt32(&inFlight, -1)
 			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"items":["/var/lib/kubelet/checkpoints/checkpoint-pod_ns-container-1234.tar"]}`))
 		}))
 		creator = NewCheckpointCreator(nil, &rest.Config{Host: server.URL})
 
 		errs := make(chan error, 2)
 		go func() {
-			errs <- creator.createCheckpoint(context.Background(), "ns", "pod", "ctr", "node")
+			_, err := creator.createCheckpoint(context.Background(), "ns", "pod", "ctr", "node")
+			errs <- err
 		}()
 		go func() {
-			errs <- creator.createCheckpoint(context.Background(), "ns", "pod", "ctr", "node")
+			_, err := creator.createCheckpoint(context.Background(), "ns", "pod", "ctr", "node")
+			errs <- err
 		}()
 
 		Expect(<-errs).NotTo(HaveOccurred())
@@ -153,6 +157,13 @@ var _ = Describe("CheckpointCreator", func() {
 		table.mu.Lock()
 		defer table.mu.Unlock()
 		Expect(table.locks).To(BeEmpty())
+	})
+
+	It("returns the checkpoint archive path from the kubelet response", func() {
+
+		path, err := creator.createCheckpoint(context.Background(), "ns", "pod", "ctr", "node")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(path).To(Equal("/var/lib/kubelet/checkpoints/checkpoint-pod_ns-container-1234.tar"))
 	})
 })
 

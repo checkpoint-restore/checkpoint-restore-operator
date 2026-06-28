@@ -17,6 +17,7 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -24,7 +25,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"encoding/json"
 
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -81,27 +81,27 @@ func (cc *CheckpointCreator) createCheckpoint(
 
 	httpClient, err := rest.HTTPClientFor(cc.restConfig)
 	if err != nil {
-		return "",err
+		return "", err
 	}
 
 	var lastErr error
 	for attempt := 1; attempt <= maxCheckpointAttempts; attempt++ {
-		lastErr = cc.createCheckpointOnce(ctx, httpClient, url, target)
+		checkpointPath, lastErr := cc.createCheckpointOnce(ctx, httpClient, url, target)
 		if lastErr == nil {
-			return nil
+			return checkpointPath, nil
 		}
 
 		if !isTransientCheckpointError(lastErr) || attempt == maxCheckpointAttempts {
-			return lastErr
+			return "", lastErr
 		}
 
 		logger.Info("retrying transient checkpoint failure", "target", target, "attempt", attempt, "error", lastErr)
 		if err := sleepWithContext(ctx, checkpointRetryDelay); err != nil {
-			return err
+			return "", err
 		}
 	}
 
-	return lastErr
+	return "", lastErr
 }
 
 func (cc *CheckpointCreator) createCheckpointOnce(
@@ -109,30 +109,34 @@ func (cc *CheckpointCreator) createCheckpointOnce(
 	httpClient *http.Client,
 	url string,
 	target string,
-) error {
+) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, checkpointRequestTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
 	if err != nil {
-		return "",err
+		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return "",err
+		return "", err
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("checkpoint failed for %s/%s/%s: status %d",
-			nameSpace, podName, containerName, resp.StatusCode)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxCheckpointErrorBodyBytes))
+		return "", &checkpointHTTPError{
+			target:     target,
+			statusCode: resp.StatusCode,
+			body:       string(body),
+		}
 	}
 
 	var result struct {
 		Items []string `json:"items"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", fmt.Errorf("failed to decode checkpoint response: %w", err)
+		return "", fmt.Errorf("failed to decode checkpoint response for %s: %w", target, err)
 	}
 	if len(result.Items) == 0 {
 		return "", fmt.Errorf("checkpoint response contained no items")
