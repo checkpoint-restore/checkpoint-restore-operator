@@ -69,6 +69,34 @@ const (
 	PostSnapshotActionDeletePod PostSnapshotAction = "DeletePod"
 )
 
+// SnapshotChainRecord records a single captured checkpoint round in a
+// forensic snapshot chain, including its SHA-256 hash and the hash of the
+// previous record for tamper-evident chain linking.
+type SnapshotChainRecord struct {
+	// index is the position of this record within the snapshot chain.
+	// +required
+	Index int32 `json:"index"`
+	// podName is the name of the pod that was checkpointed.
+	// +required
+	PodName string `json:"podName"`
+	// containerName is the name of the container that was checkpointed.
+	// +required
+	ContainerName string `json:"containerName"`
+	// checkpointPath is the path of the checkpoint archive on the node.
+	// +required
+	CheckpointPath string `json:"checkpointPath"`
+	// snapshotTime is when this checkpoint round was captured.
+	// +required
+	SnapshotTime metav1.Time `json:"snapshotTime"`
+	// sha256Hash is the SHA-256 checksum of the checkpoint archive.
+	// +optional
+	SHA256Hash string `json:"sha256Hash,omitempty"`
+	// previousSHA256Hash is the sha256Hash of the preceding record in the
+	// chain, linking records into a tamper-evident sequence.
+	// +optional
+	PreviousSHA256Hash string `json:"previousSHA256Hash,omitempty"`
+}
+
 // ForensicSnapshotChainSpec defines the desired state of ForensicSnapshotChain
 type ForensicSnapshotChainSpec struct {
 	// namespace is the namespace containing the selected pods
@@ -141,6 +169,11 @@ type ForensicSnapshotChainStatus struct {
 	// observedGeneration is the most recent generation observed by the controller.
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+	// snapshotChainRecords is the ordered list of captured checkpoint rounds,
+	// each linked to the previous by its SHA-256 hash for integrity verification.
+	// +optional
+	// +listType=atomic
+	SnapshotChainRecords []SnapshotChainRecord `json:"snapshotChainRecords,omitempty"`
 }
 
 // +kubebuilder:object:root=true

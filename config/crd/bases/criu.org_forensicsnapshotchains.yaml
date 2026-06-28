@@ -249,6 +249,55 @@ spec:
                 description: phase is the current high-level state of the snapshot
                   run.
                 type: string
+              snapshotChainRecords:
+                description: |-
+                  snapshotChainRecords is the ordered list of captured checkpoint rounds,
+                  each linked to the previous by its SHA-256 hash for integrity verification.
+                items:
+                  description: |-
+                    SnapshotChainRecord records a single captured checkpoint round in a
+                    forensic snapshot chain, including its SHA-256 hash and the hash of the
+                    previous record for tamper-evident chain linking.
+                  properties:
+                    checkpointPath:
+                      description: checkpointPath is the path of the checkpoint archive
+                        on the node.
+                      type: string
+                    containerName:
+                      description: containerName is the name of the container that
+                        was checkpointed.
+                      type: string
+                    index:
+                      description: index is the position of this record within the
+                        snapshot chain.
+                      format: int32
+                      type: integer
+                    podName:
+                      description: podName is the name of the pod that was checkpointed.
+                      type: string
+                    previousSHA256Hash:
+                      description: |-
+                        previousSHA256Hash is the sha256Hash of the preceding record in the
+                        chain, linking records into a tamper-evident sequence.
+                      type: string
+                    sha256Hash:
+                      description: sha256Hash is the SHA-256 checksum of the checkpoint
+                        archive.
+                      type: string
+                    snapshotTime:
+                      description: snapshotTime is when this checkpoint round was
+                        captured.
+                      format: date-time
+                      type: string
+                  required:
+                  - checkpointPath
+                  - containerName
+                  - index
+                  - podName
+                  - snapshotTime
+                  type: object
+                type: array
+                x-kubernetes-list-type: atomic
               snapshotCount:
                 description: snapshotCount is the number of capture rounds completed
                   so far.
