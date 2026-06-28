@@ -1,14 +1,18 @@
 apiVersion: criu.org/v1
 kind: ForensicSnapshotChain
 metadata:
-  name: max-snapshots-test
+  name: integrity-test
 spec:
   namespace: default
   selector:
     matchLabels:
       app: nginx
+  containerNames:
+    - nginx
   capture:
     interval: 5s
     maxSnapshots: 3
-
-  postSnapshotAction: DeletePod
+    maxDuration: 1m
+  integrity:
+    hashAlgorithm: sha256
+  postSnapshotAction: None

@@ -18,13 +18,14 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	meta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
-	"k8s.io/client-go/util/retry"
 
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -35,46 +36,35 @@ import (
 	criuorgv1 "github.com/checkpoint-restore/checkpoint-restore-operator/api/v1"
 )
 
-// In case DefaultInterval is not specified by the user. Full checkpoints are
-// expensive, so the default cadence is conservative.
-const DefaultInterval = 30 * time.Second
-
-// maxConsecutiveCheckpointFailures bounds how many consecutive capture rounds
-// may fail before a chain configured with maxSnapshots but no maxDuration gives
-// up and moves to the Failed phase. createCheckpoint already retries transient
-// kubelet errors internally, so reaching this many whole-round failures
-// indicates an unrecoverable target rather than a passing glitch. When a
-// maxDuration backstop is set, that time bound governs instead and the chain
-// keeps retrying until it elapses.
-const maxConsecutiveCheckpointFailures = 5
+// In case DefaultInterval is not specified by the user
+const DefaultInterval = 2 * time.Second
 
 // ForensicSnapshotChainReconciler reconciles a ForensicSnapshotChain object
 type ForensicSnapshotChainReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
 
-	// RestConfig is used to reach the kubelet checkpoint API.
+	ClientSet *kubernetes.Clientset
+	Scheme    *runtime.Scheme
+
 	RestConfig *rest.Config
-	// Checkpointer overrides the default kubelet-proxy checkpoint creator;
-	// used by tests.
-	Checkpointer Checkpointer
-}
-
-func (r *ForensicSnapshotChainReconciler) checkpointer() Checkpointer {
-	if r.Checkpointer != nil {
-		return r.Checkpointer
-	}
-	return NewCheckpointCreator(r.Client, r.RestConfig)
 }
 
 // +kubebuilder:rbac:groups=criu.org,resources=forensicsnapshotchains,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=criu.org,resources=forensicsnapshotchains/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=criu.org,resources=forensicsnapshotchains/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;delete
+// +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=pods/log,verbs=get
 
-// Reconcile drives a ForensicSnapshotChain through its phase state machine
-// ("" -> Pending -> Running -> Completed/Failed), creating a round of container
-// checkpoints on each Running reconcile until a stop condition is reached.
+// Reconcile is part of the main kubernetes reconciliation loop which aims to
+// move the current state of the cluster closer to the desired state.
+// TODO(user): Modify the Reconcile function to compare the state specified by
+// the ForensicSnapshotChain object against the actual cluster state, and then
+// perform operations to make the cluster state reflect the state specified by
+// the user.
+//
+// For more details, check Reconcile and its Result here:
+// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.23.3/pkg/reconcile
 func (r *ForensicSnapshotChainReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 
 	log := logf.FromContext(ctx)
@@ -105,12 +95,6 @@ func (r *ForensicSnapshotChainReconciler) Reconcile(ctx context.Context, req ctr
 	//If the phase is empty, this is a new ForensicSnapshotChain
 	// and we need to initialize it, that's why pending
 	if chain.Status.Phase == criuorgv1.SnapshotChainPhase("") {
-		if chain.Spec.Capture.Interval == nil {
-			log.Info(
-				"Interval not specified, using default interval",
-				"interval", DefaultInterval,
-			)
-		}
 		chain.Status.Phase = criuorgv1.PhasePending
 
 		meta.SetStatusCondition(
@@ -127,15 +111,12 @@ func (r *ForensicSnapshotChainReconciler) Reconcile(ctx context.Context, req ctr
 		//to record start time of the snapshot chain
 		now := metav1.Now()
 		chain.Status.StartTime = &now
-		chain.Status.ObservedGeneration = chain.Generation
 
 		if err := r.Status().Update(ctx, chain); err != nil {
 			return ctrl.Result{}, err
 		}
 
-		// The status update re-enqueues this object through the controller's
-		// own watch; no explicit requeue is needed.
-		return ctrl.Result{}, nil
+		return ctrl.Result{Requeue: true}, nil
 	}
 
 	//PENDING -> RUNNING PHASE
@@ -153,54 +134,88 @@ func (r *ForensicSnapshotChainReconciler) Reconcile(ctx context.Context, req ctr
 				LastTransitionTime: metav1.Now(),
 			},
 		)
-		chain.Status.ObservedGeneration = chain.Generation
 
 		if err := r.Status().Update(ctx, chain); err != nil {
 			return ctrl.Result{}, err
 		}
 
-		// The status update re-enqueues this object through the controller's
-		// own watch; no explicit requeue is needed.
-		return ctrl.Result{}, nil
+		return ctrl.Result{Requeue: true}, nil
 
 	}
 
 	//RUNNING PHASE
-	// If the phase is running, we create one round of checkpoints per reconcile
-	// until a stop condition (maxDuration or maxSnapshots) is reached.
+	// If the phase is running, we need to start/continue the snapshot chain
 	if chain.Status.Phase == criuorgv1.PhaseRunning {
-		// MaxDuration backstop. Checked once per reconcile, before the capture
-		// round and independent of how many pods match, so an idle or
-		// mis-targeted chain still terminates.
-		if chain.Spec.Capture.MaxDuration != nil && chain.Status.StartTime != nil {
-			elapsed := metav1.Now().Sub(chain.Status.StartTime.Time)
-			if elapsed > chain.Spec.Capture.MaxDuration.Duration {
-				// Only the DeletePod action needs the pod list; skip the
-				// List call entirely when no destructive action is configured.
-				var pods []corev1.Pod
-				if chain.Spec.PostSnapshotAction == criuorgv1.PostSnapshotActionDeletePod {
-					var err error
-					pods, err = getMatchingPods(
-						ctx,
-						r.Client,
-						chain.Spec.Namespace,
-						&chain.Spec.Selector,
-					)
-					if err != nil {
-						return ctrl.Result{}, err
-					}
-				}
 
-				// Persist the terminal status before running the post-snapshot
-				// action, so the destructive action only fires once the chain is
-				// durably Completed. If the status write fails we retry with the
-				// pods untouched, instead of deleting them and then looping.
-				if err := r.updateChainStatus(ctx, chain, func(latest *criuorgv1.ForensicSnapshotChain) {
+		if chain.Spec.Integrity.HashAlgorithm != "" && chain.Spec.Integrity.HashAlgorithm != "sha256" {
+			chain.Status.Phase = criuorgv1.PhaseFailed
+			chain.Status.ErrorMessage = fmt.Sprintf("unsupported hash algorithm: %s", chain.Spec.Integrity.HashAlgorithm)
+
+			meta.SetStatusCondition(
+				&chain.Status.Conditions,
+				metav1.Condition{
+					Type:    "Ready",
+					Status:  metav1.ConditionFalse,
+					Reason:  "Failed",
+					Message: fmt.Sprintf("unsupported hash algorithm: %s", chain.Spec.Integrity.HashAlgorithm),
+				},
+			)
+
+			_ = r.Status().Update(ctx, chain)
+
+			return ctrl.Result{}, fmt.Errorf("unsupported hash algorithm: %s", chain.Spec.Integrity.HashAlgorithm)
+		}
+
+		hashingEnabled := chain.Spec.Integrity.HashAlgorithm == "sha256"
+
+		//creating checkpoints
+		creator := NewCheckpointCreator(
+			r.Client,
+			r.RestConfig,
+		)
+
+		pods, err := getMatchingPods(
+			ctx,
+			r.Client,
+			chain.Spec.Namespace,
+			&chain.Spec.Selector,
+		)
+
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+
+		previousHash := ""
+		if len(chain.Status.SnapshotChainRecords) > 0 {
+			previousHash = chain.Status.SnapshotChainRecords[len(chain.Status.SnapshotChainRecords)-1].SHA256Hash
+		}
+
+		//logic for container selection/filteration
+		for _, pod := range pods {
+
+			containers := filterContainers(
+				pod, chain.Spec.ContainerNames,
+			)
+
+			// Checking duration constraint before creating a checkpoint
+			if chain.Spec.Capture.MaxDuration == nil {
+				log.Info(
+					"MaxDuration not specified is nil",
+				)
+
+			} else if chain.Status.StartTime != nil {
+				//Calculating the elapsed time since the start of the snapshot chain execution
+				elapsed := metav1.Now().Sub(chain.Status.StartTime.Time)
+
+				//If the elapsed time exceeds the specified maximum duration, we can update the status to completed and exit the reconciliation loop
+				if elapsed > chain.Spec.Capture.MaxDuration.Duration {
+
 					now := metav1.Now()
-					latest.Status.CompletionTime = &now
-					latest.Status.Phase = criuorgv1.PhaseCompleted
+					chain.Status.CompletionTime = &now
+					chain.Status.Phase = criuorgv1.PhaseCompleted
+
 					meta.SetStatusCondition(
-						&latest.Status.Conditions,
+						&chain.Status.Conditions,
 						metav1.Condition{
 							Type:               "Ready",
 							Status:             metav1.ConditionTrue,
@@ -209,237 +224,161 @@ func (r *ForensicSnapshotChainReconciler) Reconcile(ctx context.Context, req ctr
 							LastTransitionTime: metav1.Now(),
 						},
 					)
-				}); err != nil {
-					return ctrl.Result{}, err
+
+					//execute post-snapshot action if specified
+					if err := r.executePostSnapshotAction(ctx, chain, pods); err != nil {
+						log.Error(err, "Failed to execute post-snapshot action")
+						//Irrespective of post snapshot action, chain shouldn't be failed.
+						//Evidence should be preserved.
+					}
+
+					if err := r.Status().Update(ctx, chain); err != nil {
+						return ctrl.Result{}, err
+					}
+
+					return ctrl.Result{}, nil
+
 				}
-
-				//execute post-snapshot action if specified
-				if err := r.executePostSnapshotAction(ctx, chain, pods, chain.Status.SnapshotCount); err != nil {
-					log.Error(err, "Failed to execute post-snapshot action")
-					//Irrespective of post snapshot action, chain shouldn't be failed.
-					//Evidence should be preserved.
-				}
-
-				return ctrl.Result{}, nil
 			}
-		}
 
-		interval := captureInterval(chain)
-		if chain.Status.LastSnapshotTime != nil {
-			next := chain.Status.LastSnapshotTime.Add(interval)
-			if now := time.Now(); now.Before(next) {
-				return ctrl.Result{RequeueAfter: next.Sub(now)}, nil
-			}
-		}
+			for _, container := range containers {
 
-		pods, err := getMatchingPods(
-			ctx,
-			r.Client,
-			chain.Spec.Namespace,
-			&chain.Spec.Selector,
-		)
-		if err != nil {
-			return ctrl.Result{}, err
-		}
-
-		// One capture round: checkpoint every selected container of every
-		// matching pod. A round is not transactional: if a checkpoint fails
-		// partway through, the round is abandoned and retried from the first
-		// container, so containers checkpointed before the failure are
-		// captured again on the retry. For forensic capture this duplicate
-		// work is acceptable (each checkpoint is an independent archive).
-		creator := r.checkpointer()
-		captured := 0
-		for _, pod := range pods {
-			for _, container := range filterContainers(pod, chain.Spec.ContainerNames) {
-				if err := creator.createCheckpoint(
+				checkpointPath, err := creator.createCheckpoint(
 					ctx,
 					chain.Spec.Namespace,
 					pod.Name,
 					container.Name,
 					pod.Spec.NodeName,
-				); err != nil {
-					// A checkpoint error is treated as transient by default: the
-					// chain stays Running and the reconcile is retried with
-					// rate-limited backoff. A single flaky kubelet response must
-					// not end an ongoing forensic capture.
-					//
-					// To keep the termination guarantee for a chain configured
-					// with maxSnapshots but no maxDuration, consecutive whole-round
-					// failures are bounded: once maxConsecutiveCheckpointFailures
-					// is reached the target is treated as unrecoverable and the
-					// chain moves to Failed. When a maxDuration backstop is set,
-					// that time bound governs instead and the chain keeps retrying.
-					failureCount := chain.Status.FailureCount + 1
-					giveUp := chain.Spec.Capture.MaxDuration == nil &&
-						failureCount >= maxConsecutiveCheckpointFailures
+				)
 
-					log.Error(err, "Checkpoint failed",
-						"pod", pod.Name,
-						"container", container.Name,
-						"consecutiveFailures", failureCount,
-						"giveUp", giveUp,
+				if err != nil {
+					chain.Status.Phase = criuorgv1.PhaseFailed
+					chain.Status.ErrorMessage = err.Error()
+
+					meta.SetStatusCondition(
+						&chain.Status.Conditions,
+						metav1.Condition{
+							Type:               "Ready",
+							Status:             metav1.ConditionFalse,
+							Reason:             "Failed",
+							Message:            err.Error(),
+							LastTransitionTime: metav1.Now(),
+						},
 					)
 
-					statusErr := r.updateChainStatus(ctx, chain, func(latest *criuorgv1.ForensicSnapshotChain) {
-						latest.Status.FailureCount++
-						latest.Status.ErrorMessage = err.Error()
-						reason := "CheckpointError"
-						if giveUp {
-							latest.Status.Phase = criuorgv1.PhaseFailed
-							failNow := metav1.Now()
-							latest.Status.CompletionTime = &failNow
-							reason = "CheckpointFailed"
-						}
-						meta.SetStatusCondition(
-							&latest.Status.Conditions,
-							metav1.Condition{
-								Type:               "Ready",
-								Status:             metav1.ConditionFalse,
-								Reason:             reason,
-								Message:            err.Error(),
-								LastTransitionTime: metav1.Now(),
-							},
-						)
-					})
-					if statusErr != nil {
-						return ctrl.Result{}, statusErr
-					}
-					// Once durably Failed there is nothing to retry, so do not
-					// return the error (which would requeue with backoff).
-					if giveUp {
-						return ctrl.Result{}, nil
-					}
+					_ = r.Status().Update(ctx, chain)
+
 					return ctrl.Result{}, err
 				}
 
-				captured++
+				record := criuorgv1.SnapshotChainRecord{
+					Index:             chain.Status.SnapshotCount,
+					PodName:           pod.Name,
+					ContainerName:     container.Name,
+					SnapshotTimestamp: metav1.Now(),
+					CheckpointPath:    checkpointPath,
+				}
+				if hashingEnabled {
+					hash, hashErr := computeChecksum(ctx, r.Client, r.ClientSet, chain.Spec.Namespace, pod.Spec.NodeName, checkpointPath)
+					if hashErr != nil {
+						log.Error(hashErr, "Failed to compute checksum")
+						meta.SetStatusCondition(&chain.Status.Conditions, metav1.Condition{
+							Type:               "IntegrityVerified",
+							Status:             metav1.ConditionFalse,
+							Reason:             "HashGenerationFailed",
+							Message:            fmt.Sprintf("snapshot %d: %s", record.Index, hashErr.Error()),
+							LastTransitionTime: metav1.Now(),
+						})
+					} else {
+						record.PreviousSHA256Hash = previousHash
+						previousHash = hash
+						record.SHA256Hash = hash
+						meta.SetStatusCondition(&chain.Status.Conditions, metav1.Condition{
+							Type:               "IntegrityVerified",
+							Status:             metav1.ConditionTrue,
+							Reason:             "HashGenerationSucceeded",
+							Message:            "all snapshots successfully hashed",
+							LastTransitionTime: metav1.Now(),
+						})
+					}
+				}
+
+				chain.Status.SnapshotChainRecords = append(chain.Status.SnapshotChainRecords, record)
+
+				//this counts the number of checkpoint files created
+				chain.Status.SnapshotCount++
+
 				log.Info(
 					"Checkpoint created",
 					"pod", pod.Name,
 					"container", container.Name,
 				)
-			}
-		}
 
-		now := metav1.Now()
-		attemptCount := chain.Status.AttemptCount + 1
-		snapshotCount := chain.Status.SnapshotCount
-		if captured > 0 {
-			snapshotCount++
-		}
+				if chain.Spec.Capture.MaxSnapshots == nil {
+					log.Info(
+						"MaxSnapshots not specified is nil",
+					)
 
-		// Decide whether this round completes the chain. There are two ways to
-		// reach maxSnapshots:
-		//   - snapshotCount: enough non-empty rounds have been captured. This
-		//     is the normal success path.
-		//   - attemptCount, only when maxDuration is unset and this round was
-		//     itself empty (captured == 0): the selector is matching no pods,
-		//     so the chain can never make progress toward maxSnapshots. Without
-		//     a time backstop it would otherwise requeue forever, so capping
-		//     attempts at maxSnapshots guarantees termination in a bounded
-		//     number of rounds. The captured == 0 guard means a chain that is
-		//     still capturing (for example one whose pods started late) is never
-		//     cut off; it terminates only on an empty round. When maxDuration is
-		//     set, empty rounds are instead bounded by the time backstop above
-		//     and do not consume the snapshot budget.
-		done := false
-		reason, message := "", ""
-		if chain.Spec.Capture.MaxSnapshots != nil {
-			limit := *chain.Spec.Capture.MaxSnapshots
-			switch {
-			case snapshotCount >= limit:
-				done, reason = true, "MaxSnapshotsReached"
-				message = "Snapshot chain completed as it reached the maximum number of snapshots"
-			case captured == 0 && chain.Spec.Capture.MaxDuration == nil && attemptCount >= limit:
-				done, reason = true, "NoMatchingPods"
-				message = "Snapshot chain completed without capturing the requested number of snapshots because no pods matched the selector"
-			}
-		}
+				} else if chain.Status.SnapshotCount >= *chain.Spec.Capture.MaxSnapshots {
+					//Recording the completion time of the snapshot chain,
+					//this will be used to calculate the duration of the snapshot chain execution
 
-		if done {
-			// Persist the terminal status before running the post-snapshot
-			// action, so the destructive action only fires once the chain is
-			// durably Completed. If the status write fails we retry with the
-			// pods untouched, instead of deleting them and then looping.
-			if err := r.updateChainStatus(ctx, chain, func(latest *criuorgv1.ForensicSnapshotChain) {
-				latest.Status.LastSnapshotTime = &now
-				latest.Status.AttemptCount++
-				// This round did not fail, so the consecutive-failure streak ends.
-				latest.Status.FailureCount = 0
-				if captured > 0 {
-					latest.Status.SnapshotCount++
-					// A successful round clears any error left by an earlier
-					// transient checkpoint failure.
-					latest.Status.ErrorMessage = ""
-				}
-				latest.Status.CompletionTime = &now
-				latest.Status.Phase = criuorgv1.PhaseCompleted
-				meta.SetStatusCondition(
-					&latest.Status.Conditions,
-					metav1.Condition{
-						Type:               "Ready",
-						Status:             metav1.ConditionTrue,
-						Reason:             reason,
-						Message:            message,
-						LastTransitionTime: metav1.Now(),
-					},
-				)
-			}); err != nil {
-				return ctrl.Result{}, err
-			}
+					now := metav1.Now()
+					chain.Status.CompletionTime = &now
 
-			//execute post-snapshot action if specified
-			if err := r.executePostSnapshotAction(ctx, chain, pods, snapshotCount); err != nil {
-				log.Error(err, "Failed to execute post-snapshot action")
-				//Irrespective of post snapshot action, chain shouldn't be failed.
-				//Evidence should be preserved.
-			}
+					//Once checkpoint creation is completed, we can update the status to completed and exit the reconciliation loop
+					chain.Status.Phase = criuorgv1.PhaseCompleted
 
-			return ctrl.Result{}, nil
-		}
-
-		if err := r.updateChainStatus(ctx, chain, func(latest *criuorgv1.ForensicSnapshotChain) {
-			latest.Status.LastSnapshotTime = &now
-			latest.Status.AttemptCount++
-			// This round did not fail, so the consecutive-failure streak ends.
-			latest.Status.FailureCount = 0
-			// SnapshotCount tracks completed capture rounds. Empty rounds (no
-			// matching pods/containers) do not count toward maxSnapshots; they
-			// are bounded by the maxDuration backstop above, or by the
-			// attemptCount cap when maxDuration is unset.
-			if captured > 0 {
-				latest.Status.SnapshotCount++
-				// A successful round clears the error and Ready condition left
-				// by an earlier transient checkpoint failure.
-				if latest.Status.ErrorMessage != "" {
-					latest.Status.ErrorMessage = ""
 					meta.SetStatusCondition(
-						&latest.Status.Conditions,
+						&chain.Status.Conditions,
 						metav1.Condition{
 							Type:               "Ready",
-							Status:             metav1.ConditionFalse,
-							Reason:             "Running",
-							Message:            "ForensicSnapshotChain is running, snapshot chain is in progress",
+							Status:             metav1.ConditionTrue,
+							Reason:             "MaxSnapshotsReached",
+							Message:            "Snapshot chain completed as it reached the maximum number of snapshots",
 							LastTransitionTime: metav1.Now(),
 						},
 					)
+
+					//execute post-snapshot action if specified
+					if err := r.executePostSnapshotAction(ctx, chain, pods); err != nil {
+						log.Error(err, "Failed to execute post-snapshot action")
+						//Irrespective of post snapshot action, chain shouldn't be failed.
+						//Evidence should be preserved.
+					}
+
+					if err := r.Status().Update(ctx, chain); err != nil {
+						return ctrl.Result{}, err
+					}
+					return ctrl.Result{}, nil
 				}
+
 			}
-		}); err != nil {
+
+		}
+
+		if err := r.Status().Update(ctx, chain); err != nil {
 			return ctrl.Result{}, err
 		}
 
+	}
+
+	if chain.Spec.Capture.Interval == nil {
+		log.Info(
+			"Interval not specified, using default interval",
+			"interval", DefaultInterval,
+		)
 		return ctrl.Result{
-			RequeueAfter: captureInterval(chain),
+			RequeueAfter: DefaultInterval,
+		}, nil
+	} else {
+		return ctrl.Result{
+			RequeueAfter: chain.Spec.Capture.Interval.Duration,
 		}, nil
 	}
 
-	// Any other phase value is unrecognized (for example a manually edited or
-	// future-version status). Take no action and do not requeue, rather than
-	// silently looping; a corrected status arrives as a new watch event.
-	log.Info("Unrecognized phase, taking no action", "phase", chain.Status.Phase)
-	return ctrl.Result{}, nil
+	//Unreachable code, but we need to return something to satisfy the function signature
+	//return ctrl.Result{}, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
@@ -450,35 +389,11 @@ func (r *ForensicSnapshotChainReconciler) SetupWithManager(mgr ctrl.Manager) err
 		Complete(r)
 }
 
-func captureInterval(chain *criuorgv1.ForensicSnapshotChain) time.Duration {
-	if chain.Spec.Capture.Interval == nil {
-		return DefaultInterval
-	}
-	return chain.Spec.Capture.Interval.Duration
-}
-
-func (r *ForensicSnapshotChainReconciler) updateChainStatus(
-	ctx context.Context,
-	chain *criuorgv1.ForensicSnapshotChain,
-	mutate func(*criuorgv1.ForensicSnapshotChain),
-) error {
-	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		latest := &criuorgv1.ForensicSnapshotChain{}
-		if err := r.Get(ctx, client.ObjectKeyFromObject(chain), latest); err != nil {
-			return err
-		}
-		mutate(latest)
-		latest.Status.ObservedGeneration = latest.Generation
-		return r.Status().Update(ctx, latest)
-	})
-}
-
 // function to execute the post-snapshot action specified in the spec
 func (r *ForensicSnapshotChainReconciler) executePostSnapshotAction(
 	ctx context.Context,
 	chain *criuorgv1.ForensicSnapshotChain,
 	pods []corev1.Pod,
-	snapshotCount int32,
 ) error {
 	log := logf.FromContext(ctx)
 
@@ -486,16 +401,9 @@ func (r *ForensicSnapshotChainReconciler) executePostSnapshotAction(
 		return nil
 	}
 
-	if snapshotCount == 0 {
-		log.Info("Skipping pod deletion because no snapshots were captured", "chain", chain.Name)
-		return nil
-	}
-
 	for _, pod := range pods {
 		log.Info("Deleting pod as post-snapshot action", "pod", pod.Name)
-		// IgnoreNotFound: the pod may already be gone (e.g. on a retried
-		// reconcile), which is not an error for a containment action.
-		if err := client.IgnoreNotFound(r.Delete(ctx, &pod)); err != nil {
+		if err := r.Delete(ctx, &pod); err != nil {
 			return err
 		}
 	}

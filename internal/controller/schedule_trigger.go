@@ -54,7 +54,7 @@ func runScheduledCheckpoints(ctx context.Context, c client.Client, creator Check
 			wg.Add(1)
 			go func(ns, podName, containerName, nodeName string) {
 				defer wg.Done()
-				if err := creator.createCheckpoint(ctx, ns, podName, containerName, nodeName); err != nil {
+				if _, err := creator.createCheckpoint(ctx, ns, podName, containerName, nodeName); err != nil {
 					logger.Error(err, "failed to create checkpoint", "pod", podName, "container", containerName)
 					return
 				}

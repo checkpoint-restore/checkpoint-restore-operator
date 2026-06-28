@@ -13,8 +13,9 @@ spec:
     interval: 5s
     maxSnapshots: 3
     maxDuration: 1m
-
-  postSnapshotAction: DeletePod
+  
+  postSnapshotAction: None
 
   integrity:
     hashAlgorithm: sha256
+

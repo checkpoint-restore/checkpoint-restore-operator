@@ -144,7 +144,7 @@ func (rt *ResourceTrigger) run(ctx context.Context) {
 			logger.Info("resource trigger: threshold exceeded, checkpointing",
 				"pod", pod.Name, "container", cm.Name, "reason", reason)
 
-			if err := rt.creator.createCheckpoint(ctx, pod.Namespace, pod.Name, cm.Name, pod.Spec.NodeName); err != nil {
+			if _, err := rt.creator.createCheckpoint(ctx, pod.Namespace, pod.Name, cm.Name, pod.Spec.NodeName); err != nil {
 				logger.Error(err, "resource trigger: checkpoint failed", "pod", pod.Name, "container", cm.Name)
 				continue
 			}

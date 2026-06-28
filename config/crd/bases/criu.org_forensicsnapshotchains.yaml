@@ -46,26 +46,13 @@ spec:
                   interval:
                     description: interval is the time between snapshots
                     type: string
-                    x-kubernetes-validations:
-                    - message: interval must be at least 1s
-                      rule: duration(self) >= duration('1s')
                   maxDuration:
-                    description: maximum lifetime of the snapshot run
+                    description: maximum lifetime of the snapshot chain
                     type: string
-                    x-kubernetes-validations:
-                    - message: maxDuration must be at least 1s
-                      rule: duration(self) >= duration('1s')
                   maxSnapshots:
-                    description: |-
-                      maximum number of capture rounds to perform before completing the capture run.
-                      Each round checkpoints every selected container of every matching pod once.
-                    format: int32
-                    minimum: 1
+                    description: maximum number of snapshots to create
                     type: integer
                 type: object
-                x-kubernetes-validations:
-                - message: at least one of maxSnapshots or maxDuration must be set
-                  rule: has(self.maxSnapshots) || has(self.maxDuration)
               containerNames:
                 description: ContainerNames restricts the snapshotiing to specific
                   containers
@@ -84,8 +71,8 @@ spec:
                 type: string
               postSnapshotAction:
                 default: None
-                description: PostSnapshotAction defines the action to take after the
-                  snapshot run completes.
+                description: PostSnapshotAction defines the action to take after each
+                  snapshotting of a pod, like after the snapshot chain is created
                 enum:
                 - None
                 - DeletePod
@@ -144,22 +131,12 @@ spec:
           status:
             description: status defines the observed state of ForensicSnapshotChain
             properties:
-              attemptCount:
-                description: |-
-                  AttemptCount is the number of capture rounds attempted so far,
-                  including rounds in which no pods matched and nothing was captured.
-                  It backstops termination of a maxSnapshots-only capture run whose selector
-                  never matches; see the controller for details.
-                format: int32
-                type: integer
               completionTime:
-                description: CompletionTime is when the resource reached a terminal
-                  phase.
                 format: date-time
                 type: string
               conditions:
                 description: Conditions represent the latest observations of the snapshot
-                  run state.
+                  chain state.
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -216,39 +193,41 @@ spec:
                   type: object
                 type: array
               errorMessage:
-                description: ErrorMessage holds the most recent capture error, if
-                  any.
                 type: string
-              failureCount:
-                description: |-
-                  FailureCount is the number of consecutive capture rounds that failed
-                  with a checkpoint error. It resets to zero after any round that did not
-                  fail. When no maxDuration is configured it backstops termination of a
-                  capture run whose target cannot be checkpointed, moving it to Failed rather
-                  than retrying forever.
-                format: int32
-                type: integer
-              lastSnapshotTime:
-                description: LastSnapshotTime is when the most recent capture round
-                  ran.
-                format: date-time
-                type: string
-              observedGeneration:
-                description: ObservedGeneration is the most recent generation observed
-                  by the controller.
-                format: int64
-                type: integer
               phase:
-                description: Phase is the current high-level state of the snapshot
-                  run.
+                description: SnapshotChainPhase represents the state of a forensic
+                  snapshot chain
                 type: string
+              snapshotChainRecords:
+                description: SnapshotRecords is a list of snapshot records
+                items:
+                  properties:
+                    checkpointPath:
+                      type: string
+                    containerName:
+                      type: string
+                    index:
+                      type: integer
+                    podName:
+                      type: string
+                    previousSHA256Hash:
+                      type: string
+                    sha256Hash:
+                      type: string
+                    snapshotTimestamp:
+                      format: date-time
+                      type: string
+                  required:
+                  - checkpointPath
+                  - containerName
+                  - index
+                  - podName
+                  - snapshotTimestamp
+                  type: object
+                type: array
               snapshotCount:
-                description: SnapshotCount is the number of capture rounds completed
-                  so far.
-                format: int32
                 type: integer
               startTime:
-                description: StartTime is when the resource entered the Pending phase.
                 format: date-time
                 type: string
             type: object
