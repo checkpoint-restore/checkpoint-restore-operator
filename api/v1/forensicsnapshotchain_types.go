@@ -65,13 +65,13 @@ const (
 //Snapshot Record to keep track of all snapshots in a chain
 
 type SnapshotChainRecord struct {
-	Index int `json:"index"`
-	PodName string `json:"podName"`
-	ContainerName string `json:"containerName"`
-	CheckpointPath string `json:"checkpointPath"`
-	SnapshotTimestamp metav1.Time `json:"snapshotTimestamp"`
-	SHA256Hash string `json:"sha256Hash,omitempty"`
-	PreviousSHA256Hash string `json:"previousSHA256Hash,omitempty"`
+	Index              int         `json:"index"`
+	PodName            string      `json:"podName"`
+	ContainerName      string      `json:"containerName"`
+	CheckpointPath     string      `json:"checkpointPath"`
+	SnapshotTimestamp  metav1.Time `json:"snapshotTimestamp"`
+	SHA256Hash         string      `json:"sha256Hash,omitempty"`
+	PreviousSHA256Hash string      `json:"previousSHA256Hash,omitempty"`
 }
 
 // ForensicSnapshotChainSpec defines the desired state of ForensicSnapshotChain
