@@ -142,6 +142,19 @@ docker-build: test ## Build docker image with the manager.
 docker-push: ## Push docker image with the manager.
 	$(CONTAINER_TOOL) push ${IMG}
 
+CRI_PROXY_IMG ?= cri-proxy:latest
+.PHONY: build-cri-proxy
+build-cri-proxy: ## Build the node-side CRI proxy binary.
+	go build -o bin/cri-proxy cmd/cri-proxy/main.go
+
+.PHONY: docker-build-cri-proxy
+docker-build-cri-proxy: ## Build docker image for the node-side CRI proxy.
+	$(CONTAINER_TOOL) build -f Dockerfile.cri-proxy -t ${CRI_PROXY_IMG} .
+
+.PHONY: docker-push-cri-proxy
+docker-push-cri-proxy: ## Push the CRI proxy docker image.
+	$(CONTAINER_TOOL) push ${CRI_PROXY_IMG}
+
 # PLATFORMS defines the target platforms for  the manager image be build to provide support to multiple
 # architectures. (i.e. make docker-buildx IMG=myregistry/mypoperator:0.0.1). To use this option you need to:
 # - able to use docker buildx . More info: https://docs.docker.com/build/buildx/

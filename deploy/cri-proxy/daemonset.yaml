@@ -1,0 +1,85 @@
+# Per-node CRI proxy for development and canary testing of the PodRestore
+# feature. For reboot-safe deployments, install the proxy as a host service using
+# deploy/cri-proxy/systemd.
+#
+# !!! OPERATIONAL PREREQUISITE !!!
+# This DaemonSet only RUNS the proxy. For the kubelet to use it you must repoint
+# the kubelet at the proxy socket and restart it, on each node:
+#
+#   --container-runtime-endpoint=unix:///run/cr-restore-proxy/cri-proxy.sock
+#   --image-service-endpoint=unix:///run/cr-restore-proxy/cri-proxy.sock
+#
+# The proxy then sits in the critical kubelet<->runtime path, so roll it out to a
+# canary node first and keep the upstream socket (-upstream) correct for your
+# runtime (containerd: /run/containerd/containerd.sock, CRI-O: /run/crio/crio.sock).
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: cri-restore-proxy
+  namespace: checkpoint-restore-operator-system
+  labels:
+    app.kubernetes.io/name: cri-restore-proxy
+    app.kubernetes.io/part-of: checkpoint-restore-operator
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cri-restore-proxy
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cri-restore-proxy
+    spec:
+      hostPID: false
+      # The proxy is in the node's container-creation critical path.
+      priorityClassName: system-node-critical
+      tolerations:
+        - operator: Exists
+      containers:
+        - name: cri-proxy
+          image: cri-proxy:latest
+          # IfNotPresent so a locally-built/imported image (e.g. on a single node)
+          # is used instead of always pulling from a registry.
+          imagePullPolicy: IfNotPresent
+          args:
+            - --upstream=/run/containerd/containerd.sock
+            - --listen=/run/cr-restore-proxy/cri-proxy.sock
+            - --health-bind-address=:8080
+          securityContext:
+            runAsUser: 0
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8080
+            initialDelaySeconds: 2
+            periodSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              memory: 128Mi
+          volumeMounts:
+            - name: runtime-sock
+              mountPath: /run/containerd
+              readOnly: true
+            - name: proxy-sock
+              mountPath: /run/cr-restore-proxy
+      volumes:
+        # Upstream runtime socket (adjust for CRI-O: /run/crio).
+        - name: runtime-sock
+          hostPath:
+            path: /run/containerd
+            type: Directory
+        # Where the proxy creates its listen socket; the kubelet is pointed here.
+        - name: proxy-sock
+          hostPath:
+            path: /run/cr-restore-proxy
+            type: DirectoryOrCreate

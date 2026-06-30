@@ -1,0 +1,269 @@
+/*
+Copyright 2026.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+// Package criproxy implements a transparent CRI proxy that sits between the
+// kubelet and a container runtime (containerd or CRI-O). It forwards every CRI
+// call unchanged, except CreateContainer: when the Pod sandbox carries a
+// restore.criu.org/checkpoint-path.<container> annotation for the container being
+// created, the proxy rewrites that container's image to the local checkpoint
+// .tar path. The runtime then takes its direct checkpoint-restore path (CRIU)
+// instead of creating the container from the base image.
+//
+// This is the node-side mechanism for the PodRestore feature: the kubelet drives
+// the normal RunPodSandbox -> CreateContainer -> StartContainer flow and never
+// knows a restore is happening; the proxy is the only component that does.
+package criproxy
+
+import (
+	"context"
+	"io"
+
+	"github.com/go-logr/logr"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
+
+	criuorgv1 "github.com/checkpoint-restore/checkpoint-restore-operator/api/v1"
+)
+
+// RuntimeProxy forwards RuntimeService calls to an upstream runtime, rewriting
+// CreateContainer for checkpoint restores.
+type RuntimeProxy struct {
+	client runtimeapi.RuntimeServiceClient
+	log    logr.Logger
+}
+
+// ImageProxy forwards ImageService calls to an upstream runtime unchanged.
+type ImageProxy struct {
+	client runtimeapi.ImageServiceClient
+	log    logr.Logger
+}
+
+// NewRuntimeProxy returns a RuntimeService server that forwards to client.
+func NewRuntimeProxy(client runtimeapi.RuntimeServiceClient, log logr.Logger) *RuntimeProxy {
+	return &RuntimeProxy{client: client, log: log}
+}
+
+// NewImageProxy returns an ImageService server that forwards to client.
+func NewImageProxy(client runtimeapi.ImageServiceClient, log logr.Logger) *ImageProxy {
+	return &ImageProxy{client: client, log: log}
+}
+
+// rewriteCreateContainer rewrites the container image to the checkpoint archive
+// path when the sandbox annotations request a restore for this container. It is
+// a no-op (and never panics) when no restore is requested. Returns the path it
+// rewrote to, or "" if it left the request unchanged.
+//
+// When a restore IS requested, the annotation value is validated with the same
+// rule the PodRestore controller applies (absolute, clean, .tar). The proxy is
+// the last gate before the runtime executes a frozen process image, so it fails
+// closed rather than trust the annotation: an invalid path returns an error and
+// nothing is forwarded upstream. err is non-nil only when a restore was
+// requested with a path that failed validation.
+func rewriteCreateContainer(req *runtimeapi.CreateContainerRequest, log logr.Logger) (string, error) {
+	cfg := req.GetConfig()
+	if cfg == nil || cfg.GetMetadata() == nil {
+		return "", nil
+	}
+	name := cfg.GetMetadata().GetName()
+	path, ok := req.GetSandboxConfig().GetAnnotations()[criuorgv1.RestoreCheckpointPathAnnotationPrefix+name]
+	if !ok || path == "" {
+		return "", nil
+	}
+
+	if err := criuorgv1.ValidateCheckpointPath(path); err != nil {
+		log.Error(err, "refusing to restore from an invalid checkpoint path",
+			"container", name, "path", path)
+		return "", status.Errorf(codes.InvalidArgument,
+			"invalid restore checkpoint path for container %q: %v", name, err)
+	}
+
+	var from string
+	img := cfg.GetImage()
+	if img != nil {
+		from = img.GetImage()
+	} else {
+		img = &runtimeapi.ImageSpec{}
+		cfg.Image = img
+	}
+	img.Image = path
+	log.Info("rewriting container image to checkpoint for restore",
+		"container", name, "from", from, "to", path)
+	return path, nil
+}
+
+// --- RuntimeService: CreateContainer is rewritten; everything else forwards ---
+
+func (p *RuntimeProxy) CreateContainer(ctx context.Context, in *runtimeapi.CreateContainerRequest) (*runtimeapi.CreateContainerResponse, error) {
+	if _, err := rewriteCreateContainer(in, p.log); err != nil {
+		return nil, err
+	}
+	return p.client.CreateContainer(ctx, in)
+}
+
+func (p *RuntimeProxy) Version(ctx context.Context, in *runtimeapi.VersionRequest) (*runtimeapi.VersionResponse, error) {
+	return p.client.Version(ctx, in)
+}
+
+func (p *RuntimeProxy) RunPodSandbox(ctx context.Context, in *runtimeapi.RunPodSandboxRequest) (*runtimeapi.RunPodSandboxResponse, error) {
+	return p.client.RunPodSandbox(ctx, in)
+}
+
+func (p *RuntimeProxy) StopPodSandbox(ctx context.Context, in *runtimeapi.StopPodSandboxRequest) (*runtimeapi.StopPodSandboxResponse, error) {
+	return p.client.StopPodSandbox(ctx, in)
+}
+
+func (p *RuntimeProxy) RemovePodSandbox(ctx context.Context, in *runtimeapi.RemovePodSandboxRequest) (*runtimeapi.RemovePodSandboxResponse, error) {
+	return p.client.RemovePodSandbox(ctx, in)
+}
+
+func (p *RuntimeProxy) PodSandboxStatus(ctx context.Context, in *runtimeapi.PodSandboxStatusRequest) (*runtimeapi.PodSandboxStatusResponse, error) {
+	return p.client.PodSandboxStatus(ctx, in)
+}
+
+func (p *RuntimeProxy) ListPodSandbox(ctx context.Context, in *runtimeapi.ListPodSandboxRequest) (*runtimeapi.ListPodSandboxResponse, error) {
+	return p.client.ListPodSandbox(ctx, in)
+}
+
+func (p *RuntimeProxy) StartContainer(ctx context.Context, in *runtimeapi.StartContainerRequest) (*runtimeapi.StartContainerResponse, error) {
+	return p.client.StartContainer(ctx, in)
+}
+
+func (p *RuntimeProxy) StopContainer(ctx context.Context, in *runtimeapi.StopContainerRequest) (*runtimeapi.StopContainerResponse, error) {
+	return p.client.StopContainer(ctx, in)
+}
+
+func (p *RuntimeProxy) RemoveContainer(ctx context.Context, in *runtimeapi.RemoveContainerRequest) (*runtimeapi.RemoveContainerResponse, error) {
+	return p.client.RemoveContainer(ctx, in)
+}
+
+func (p *RuntimeProxy) ListContainers(ctx context.Context, in *runtimeapi.ListContainersRequest) (*runtimeapi.ListContainersResponse, error) {
+	return p.client.ListContainers(ctx, in)
+}
+
+func (p *RuntimeProxy) ContainerStatus(ctx context.Context, in *runtimeapi.ContainerStatusRequest) (*runtimeapi.ContainerStatusResponse, error) {
+	return p.client.ContainerStatus(ctx, in)
+}
+
+func (p *RuntimeProxy) UpdateContainerResources(ctx context.Context, in *runtimeapi.UpdateContainerResourcesRequest) (*runtimeapi.UpdateContainerResourcesResponse, error) {
+	return p.client.UpdateContainerResources(ctx, in)
+}
+
+func (p *RuntimeProxy) ReopenContainerLog(ctx context.Context, in *runtimeapi.ReopenContainerLogRequest) (*runtimeapi.ReopenContainerLogResponse, error) {
+	return p.client.ReopenContainerLog(ctx, in)
+}
+
+func (p *RuntimeProxy) ExecSync(ctx context.Context, in *runtimeapi.ExecSyncRequest) (*runtimeapi.ExecSyncResponse, error) {
+	return p.client.ExecSync(ctx, in)
+}
+
+func (p *RuntimeProxy) Exec(ctx context.Context, in *runtimeapi.ExecRequest) (*runtimeapi.ExecResponse, error) {
+	return p.client.Exec(ctx, in)
+}
+
+func (p *RuntimeProxy) Attach(ctx context.Context, in *runtimeapi.AttachRequest) (*runtimeapi.AttachResponse, error) {
+	return p.client.Attach(ctx, in)
+}
+
+func (p *RuntimeProxy) PortForward(ctx context.Context, in *runtimeapi.PortForwardRequest) (*runtimeapi.PortForwardResponse, error) {
+	return p.client.PortForward(ctx, in)
+}
+
+func (p *RuntimeProxy) ContainerStats(ctx context.Context, in *runtimeapi.ContainerStatsRequest) (*runtimeapi.ContainerStatsResponse, error) {
+	return p.client.ContainerStats(ctx, in)
+}
+
+func (p *RuntimeProxy) ListContainerStats(ctx context.Context, in *runtimeapi.ListContainerStatsRequest) (*runtimeapi.ListContainerStatsResponse, error) {
+	return p.client.ListContainerStats(ctx, in)
+}
+
+func (p *RuntimeProxy) PodSandboxStats(ctx context.Context, in *runtimeapi.PodSandboxStatsRequest) (*runtimeapi.PodSandboxStatsResponse, error) {
+	return p.client.PodSandboxStats(ctx, in)
+}
+
+func (p *RuntimeProxy) ListPodSandboxStats(ctx context.Context, in *runtimeapi.ListPodSandboxStatsRequest) (*runtimeapi.ListPodSandboxStatsResponse, error) {
+	return p.client.ListPodSandboxStats(ctx, in)
+}
+
+func (p *RuntimeProxy) UpdateRuntimeConfig(ctx context.Context, in *runtimeapi.UpdateRuntimeConfigRequest) (*runtimeapi.UpdateRuntimeConfigResponse, error) {
+	return p.client.UpdateRuntimeConfig(ctx, in)
+}
+
+func (p *RuntimeProxy) Status(ctx context.Context, in *runtimeapi.StatusRequest) (*runtimeapi.StatusResponse, error) {
+	return p.client.Status(ctx, in)
+}
+
+func (p *RuntimeProxy) CheckpointContainer(ctx context.Context, in *runtimeapi.CheckpointContainerRequest) (*runtimeapi.CheckpointContainerResponse, error) {
+	return p.client.CheckpointContainer(ctx, in)
+}
+
+func (p *RuntimeProxy) ListMetricDescriptors(ctx context.Context, in *runtimeapi.ListMetricDescriptorsRequest) (*runtimeapi.ListMetricDescriptorsResponse, error) {
+	return p.client.ListMetricDescriptors(ctx, in)
+}
+
+func (p *RuntimeProxy) ListPodSandboxMetrics(ctx context.Context, in *runtimeapi.ListPodSandboxMetricsRequest) (*runtimeapi.ListPodSandboxMetricsResponse, error) {
+	return p.client.ListPodSandboxMetrics(ctx, in)
+}
+
+func (p *RuntimeProxy) RuntimeConfig(ctx context.Context, in *runtimeapi.RuntimeConfigRequest) (*runtimeapi.RuntimeConfigResponse, error) {
+	return p.client.RuntimeConfig(ctx, in)
+}
+
+func (p *RuntimeProxy) UpdatePodSandboxResources(ctx context.Context, in *runtimeapi.UpdatePodSandboxResourcesRequest) (*runtimeapi.UpdatePodSandboxResourcesResponse, error) {
+	return p.client.UpdatePodSandboxResources(ctx, in)
+}
+
+// GetContainerEvents is the only server-streaming RPC; relay events one by one.
+func (p *RuntimeProxy) GetContainerEvents(in *runtimeapi.GetEventsRequest, srv runtimeapi.RuntimeService_GetContainerEventsServer) error {
+	upstream, err := p.client.GetContainerEvents(srv.Context(), in)
+	if err != nil {
+		return err
+	}
+	for {
+		ev, err := upstream.Recv()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if err := srv.Send(ev); err != nil {
+			return err
+		}
+	}
+}
+
+// --- ImageService: pure passthrough ---
+
+func (p *ImageProxy) ListImages(ctx context.Context, in *runtimeapi.ListImagesRequest) (*runtimeapi.ListImagesResponse, error) {
+	return p.client.ListImages(ctx, in)
+}
+
+func (p *ImageProxy) ImageStatus(ctx context.Context, in *runtimeapi.ImageStatusRequest) (*runtimeapi.ImageStatusResponse, error) {
+	return p.client.ImageStatus(ctx, in)
+}
+
+func (p *ImageProxy) PullImage(ctx context.Context, in *runtimeapi.PullImageRequest) (*runtimeapi.PullImageResponse, error) {
+	return p.client.PullImage(ctx, in)
+}
+
+func (p *ImageProxy) RemoveImage(ctx context.Context, in *runtimeapi.RemoveImageRequest) (*runtimeapi.RemoveImageResponse, error) {
+	return p.client.RemoveImage(ctx, in)
+}
+
+func (p *ImageProxy) ImageFsInfo(ctx context.Context, in *runtimeapi.ImageFsInfoRequest) (*runtimeapi.ImageFsInfoResponse, error) {
+	return p.client.ImageFsInfo(ctx, in)
+}

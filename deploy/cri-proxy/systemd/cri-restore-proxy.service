@@ -1,0 +1,23 @@
+[Unit]
+Description=Checkpoint Restore CRI Proxy
+Documentation=https://github.com/checkpoint-restore/checkpoint-restore-operator
+Requires=cri-restore-proxy.socket
+After=containerd.service crio.service
+Before=kubelet.service
+
+[Service]
+Type=simple
+Sockets=cri-restore-proxy.socket
+Environment=CRI_PROXY_UPSTREAM=/run/containerd/containerd.sock
+Environment=CRI_PROXY_LISTEN=/run/cr-restore-proxy/cri-proxy.sock
+Environment=CRI_PROXY_HEALTH=127.0.0.1:18080
+EnvironmentFile=-/etc/default/cri-restore-proxy
+ExecStart=/usr/local/bin/cri-proxy \
+  --upstream=${CRI_PROXY_UPSTREAM} \
+  --listen=${CRI_PROXY_LISTEN} \
+  --health-bind-address=${CRI_PROXY_HEALTH}
+Restart=always
+RestartSec=1
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,209 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 880" role="img" aria-labelledby="title desc">
+  <title id="title">PodRestore checkpoint restore flow</title>
+  <desc id="desc">A two-lane diagram showing how the PodRestore controller renders a node-pinned Pod, then kubelet calls the CRI proxy, which rewrites CreateContainer to the checkpoint archive so the runtime restores through CRIU.</desc>
+  <defs>
+    <linearGradient id="page" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f6f8fa"/>
+      <stop offset="1" stop-color="#eef3fb"/>
+    </linearGradient>
+    <linearGradient id="controlBand" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#eef5ff"/>
+      <stop offset="1" stop-color="#f8fbff"/>
+    </linearGradient>
+    <linearGradient id="nodeBand" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#f2f7ff"/>
+      <stop offset="1" stop-color="#fbfdff"/>
+    </linearGradient>
+    <filter id="shadow" x="-15%" y="-20%" width="130%" height="150%">
+      <feDropShadow dx="0" dy="12" stdDeviation="12" flood-color="#0f172a" flood-opacity="0.11"/>
+    </filter>
+    <filter id="softShadow" x="-12%" y="-16%" width="124%" height="140%">
+      <feDropShadow dx="0" dy="8" stdDeviation="8" flood-color="#0f172a" flood-opacity="0.08"/>
+    </filter>
+    <filter id="whiteLift" x="-10%" y="-20%" width="120%" height="145%">
+      <feDropShadow dx="0" dy="3" stdDeviation="3" flood-color="#0f172a" flood-opacity="0.12"/>
+    </filter>
+    <marker id="arrowBlue" viewBox="0 0 12 12" refX="10.5" refY="6" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 1 1 L 11 6 L 1 11 z" fill="#326CE5"/>
+    </marker>
+    <marker id="arrowTeal" viewBox="0 0 12 12" refX="10.5" refY="6" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 1 1 L 11 6 L 1 11 z" fill="#00A88E"/>
+    </marker>
+    <marker id="arrowRed" viewBox="0 0 12 12" refX="10.5" refY="6" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 1 1 L 11 6 L 1 11 z" fill="#EA4335"/>
+    </marker>
+    <marker id="arrowSlate" viewBox="0 0 12 12" refX="10.5" refY="6" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+      <path d="M 1 1 L 11 6 L 1 11 z" fill="#64748b"/>
+    </marker>
+    <style>
+      .band-label { font: 700 16px Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; letter-spacing: .08em; text-transform: uppercase; fill: #000000; }
+      .band-note { font: 500 16px Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #000000; }
+      .card-title { font: 700 18px Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #000000; }
+      .card-subtitle { font: 500 16px Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #000000; }
+      .body { font: 500 16px Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #000000; }
+      .body-strong { font: 700 16px Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #000000; }
+      .small { font: 500 16px Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #000000; }
+      .tiny { font: 600 16px Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #000000; }
+      .code { font: 600 16px "SFMono-Regular", Consolas, "Liberation Mono", monospace; fill: #000000; }
+      .code-small { font: 600 16px "SFMono-Regular", Consolas, "Liberation Mono", monospace; fill: #000000; }
+      .pill-text { font: 700 16px Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; letter-spacing: .05em; text-transform: uppercase; dominant-baseline: middle; }
+      .center { text-anchor: middle; }
+      .card { fill: #ffffff; stroke: #d0d7de; stroke-width: 1.4; rx: 18; filter: url(#softShadow); }
+      .blue-flow { fill: none; stroke: #326CE5; stroke-width: 2.4; stroke-linecap: butt; stroke-linejoin: round; marker-end: url(#arrowBlue); }
+      .teal-flow { fill: none; stroke: #00A88E; stroke-width: 2.4; stroke-linecap: butt; stroke-linejoin: round; marker-end: url(#arrowTeal); }
+      .rewrite-flow { fill: none; stroke: #EA4335; stroke-width: 2.6; stroke-linecap: butt; stroke-linejoin: round; marker-end: url(#arrowRed); }
+      .slate-flow { fill: none; stroke: #64748b; stroke-width: 2; stroke-linecap: butt; stroke-linejoin: round; stroke-dasharray: 7 8; marker-end: url(#arrowSlate); }
+      .flow-label { font: 700 16px Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #326CE5; }
+      .runtime-label { font: 700 16px Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #007A6E; }
+      .rewrite-label { font: 700 16px Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #A50E0E; }
+      .label-chip { fill: #ffffff; fill-opacity: 1; stroke: #d0d7de; stroke-width: 1; }
+      .white-underlay { fill: #ffffff; fill-opacity: 1; stroke: none; }
+      .white-surface { fill: #ffffff; fill-opacity: 1; stroke: #d0d7de; stroke-width: 1; }
+      .criu-surface { fill: #ffffff; fill-opacity: 1; stroke: #F28B82; stroke-width: 1.6; }
+      .divider { stroke: #e2e8f0; stroke-width: 1.2; }
+    </style>
+  </defs>
+
+  <g id="legend" transform="translate(420 68)">
+    <line x1="0" y1="0" x2="52" y2="0" class="blue-flow"/>
+    <text class="tiny" x="68" y="5">controller render</text>
+    <line x1="236" y1="0" x2="288" y2="0" class="teal-flow"/>
+    <text class="tiny" x="304" y="5">normal CRI call</text>
+    <line x1="472" y1="0" x2="524" y2="0" class="rewrite-flow"/>
+    <text class="tiny" x="540" y="5">rewrite</text>
+  </g>
+
+  <g id="control-plane" transform="translate(0 -50)">
+    <rect x="56" y="148" width="1328" height="334" rx="28" fill="url(#controlBand)" stroke="#cfe2f3" filter="url(#shadow)"/>
+    <text class="band-label" x="88" y="190">control plane</text>
+    <text class="band-note" x="88" y="213">No restore happens here; the controller renders a normal Pod manifest with restore metadata.</text>
+
+    <g id="podrestore-cr" transform="translate(122 254)">
+      <rect class="card" x="0" y="0" width="200" height="136"/>
+      <rect x="70" y="18" width="60" height="30" rx="15" fill="#DCEBFF"/>
+      <text class="pill-text center" x="100" y="33" fill="#2559C7">CRD</text>
+      <text class="card-title center" x="100" y="72">PodRestore CR</text>
+      <text class="body center" x="100" y="98">spec.targetNode</text>
+      <text class="body center" x="100" y="122">spec.checkpoints[]</text>
+    </g>
+
+    <path class="blue-flow" d="M 322 322 L 510 322"/>
+    <rect class="white-underlay" x="358" y="279" width="116" height="36" rx="18"/>
+    <rect class="white-surface" x="360" y="281" width="112" height="32" rx="16"/>
+    <text class="flow-label center" x="416" y="303">reconcile</text>
+
+    <g id="operator" transform="translate(510 250)">
+      <rect class="card" x="0" y="0" width="240" height="144"/>
+      <rect x="63" y="18" width="114" height="30" rx="15" fill="#E6F4FF"/>
+      <text class="pill-text center" x="120" y="33" fill="#0B6EA8">operator</text>
+      <text class="card-title center" x="120" y="72">controller</text>
+      <text class="body center" x="120" y="98">validates checkpoint paths</text>
+      <text class="body center" x="120" y="122">fills missing base image</text>
+    </g>
+
+    <path class="blue-flow" d="M 750 322 L 936 322"/>
+    <rect class="white-underlay" x="785" y="279" width="116" height="36" rx="18"/>
+    <rect class="white-surface" x="787" y="281" width="112" height="32" rx="16"/>
+    <text class="flow-label center" x="843" y="303">render Pod</text>
+
+    <g id="rendered-pod" transform="translate(936 216)">
+      <rect class="card" x="0" y="0" width="316" height="174"/>
+      <rect x="80" y="18" width="156" height="30" rx="15" fill="#DCEBFF"/>
+      <text class="pill-text center" x="158" y="33" fill="#2559C7">rendered Pod</text>
+      <text class="card-title center" x="158" y="76">ordinary Pod manifest</text>
+      <line class="divider" x1="24" y1="94" x2="292" y2="94"/>
+      <text class="body-strong center" x="158" y="116">spec.nodeName = targetNode</text>
+      <text class="small center" x="158" y="140">checkpoint archive is node-local</text>
+      <text class="body center" x="158" y="164">image remains pullable for kubelet</text>
+    </g>
+
+    <g id="annotation" transform="translate(752 398)">
+      <rect x="0" y="0" width="600" height="40" rx="14" fill="#FCE8E6" stroke="#F28B82"/>
+      <text class="code center" x="300" y="20" dominant-baseline="middle">restore.criu.org/checkpoint-path.&lt;container&gt; = /path/to.tar</text>
+    </g>
+  </g>
+
+  <g id="node-runtime" transform="translate(0 -60)">
+    <rect x="56" y="510" width="1328" height="406" rx="28" fill="url(#nodeBand)" stroke="#BFE9DE" filter="url(#shadow)"/>
+    <text class="band-label" x="88" y="552">runtime path</text>
+    <text class="band-note" x="88" y="575">Kubelet uses the normal CRI lifecycle; the proxy rewrites only CreateContainer.</text>
+
+    <g id="kubelet" transform="translate(92 626)">
+      <rect class="card" x="0" y="0" width="230" height="150"/>
+      <rect x="78" y="18" width="74" height="30" rx="15" fill="#DDF7EF"/>
+      <text class="pill-text center" x="115" y="33" fill="#007A6E">node</text>
+      <text class="card-title center" x="115" y="76">kubelet</text>
+      <text class="body center" x="115" y="112">normal Pod startup flow</text>
+    </g>
+
+    <g id="proxy" transform="translate(520 626)">
+      <rect class="card" x="0" y="0" width="230" height="150"/>
+      <rect x="58" y="18" width="114" height="30" rx="15" fill="#FCE8E6"/>
+      <text class="pill-text center" x="115" y="33" fill="#A50E0E">CRI proxy</text>
+      <text class="card-title center" x="115" y="76">restore-aware shim</text>
+      <text class="body center" x="115" y="110">forwards all CRI calls</text>
+      <text class="body center" x="115" y="134">except CreateContainer</text>
+    </g>
+
+    <g id="runtime" transform="translate(900 626)">
+      <rect class="card" x="0" y="0" width="230" height="150"/>
+      <rect x="13" y="18" width="204" height="30" rx="15" fill="#DDF7EF"/>
+      <text class="pill-text center" x="115" y="33" fill="#007A6E">container runtime</text>
+      <text class="card-title center" x="115" y="76">containerd / CRI-O</text>
+      <text class="body center" x="115" y="110">receives archive path</text>
+      <text class="body center" x="115" y="134">takes direct restore path</text>
+    </g>
+
+    <g id="criu" transform="translate(1218 650)">
+      <circle cx="76" cy="58" r="60" fill="#ffffff" fill-opacity="1"/>
+      <circle cx="76" cy="58" r="58" fill="#ffffff" fill-opacity="1" stroke="#F28B82" stroke-width="1.6" filter="url(#whiteLift)"/>
+      <text class="card-title center" x="76" y="54">CRIU</text>
+      <text class="body center" x="76" y="80">restore</text>
+    </g>
+
+    <path class="teal-flow" d="M 322 682 L 520 682"/>
+    <rect class="white-underlay" x="341" y="636" width="160" height="36" rx="18"/>
+    <rect class="label-chip" x="343" y="638" width="156" height="32" rx="16"/>
+    <text class="runtime-label center" x="421" y="660">RunPodSandbox</text>
+
+    <path class="teal-flow" d="M 322 730 L 520 730"/>
+    <rect class="white-underlay" x="341" y="744" width="160" height="36" rx="18"/>
+    <rect class="label-chip" x="343" y="746" width="156" height="32" rx="16"/>
+    <text class="runtime-label center" x="421" y="768">CreateContainer</text>
+
+    <path class="teal-flow" d="M 750 704 L 900 704"/>
+    <rect class="white-underlay" x="759" y="660" width="132" height="36" rx="18"/>
+    <rect class="label-chip" x="761" y="662" width="128" height="32" rx="16"/>
+    <text class="runtime-label center" x="825" y="683">forward CRI</text>
+
+    <path class="teal-flow" d="M 1130 704 L 1236 704"/>
+
+    <g id="archive" transform="translate(461 850)">
+      <rect x="24" y="-34" width="300" height="68" rx="16" fill="#FCE8E6" stroke="#F28B82"/>
+      <text class="rewrite-label center" x="174" y="-7">proxy rewrites image field</text>
+      <text class="code-small center" x="174" y="19">to /path/to.tar on targetNode</text>
+    </g>
+
+    <path class="rewrite-flow" d="M 635 776 L 635 816"/>
+
+    <path class="rewrite-flow" d="M 785 850 C 862 850, 958 820, 1015 776"/>
+    <text class="rewrite-label center" x="1015" y="842">runtime restores from .tar</text>
+  </g>
+
+  <path class="slate-flow" d="M 1106 388 C 1106 420, 1044 438, 986 462 C 908 492, 802 516, 742 566"/>
+  <rect x="910" y="404" width="384" height="38" rx="19" fill="#ffffff" fill-opacity="1"/>
+  <rect x="912" y="406" width="380" height="34" rx="17" fill="#ffffff" fill-opacity="1" stroke="#aab6c5" stroke-width="1.2" filter="url(#whiteLift)"/>
+  <text class="tiny center" x="1102" y="428">scheduled Pod carries restore annotation</text>
+
+  <g id="callouts" transform="translate(0 -70)">
+    <rect x="128" y="864" width="344" height="72" rx="18" fill="#ffffff" fill-opacity="1"/>
+    <rect x="130" y="866" width="340" height="68" rx="16" fill="#ffffff" fill-opacity="1" stroke="#aab6c5" stroke-width="1.2" filter="url(#whiteLift)"/>
+    <text class="small center" x="300" y="894">Kubelet does not know this is a restore.</text>
+    <text class="small center" x="300" y="917">It sees a normal Pod with a valid image.</text>
+
+    <rect x="978" y="864" width="334" height="72" rx="18" fill="#ffffff" fill-opacity="1"/>
+    <rect x="980" y="866" width="330" height="68" rx="16" fill="#ffffff" fill-opacity="1" stroke="#aab6c5" stroke-width="1.2" filter="url(#whiteLift)"/>
+    <text class="small center" x="1145" y="894">The proxy validates the archive path</text>
+    <text class="small center" x="1145" y="917">and fails closed on malformed paths.</text>
+  </g>
+</svg>
