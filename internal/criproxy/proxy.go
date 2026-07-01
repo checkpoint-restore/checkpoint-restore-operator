@@ -60,14 +60,20 @@ type Options struct {
 
 // RuntimeProxy forwards RuntimeService calls to an upstream runtime, rewriting
 // CreateContainer for checkpoint restores.
+// Embedding UnimplementedRuntimeServiceServer satisfies the gRPC interface guard
+// and ensures any future methods added to the interface return Unimplemented
+// instead of failing to compile.
 type RuntimeProxy struct {
+	runtimeapi.UnimplementedRuntimeServiceServer
 	client runtimeapi.RuntimeServiceClient
 	opts   Options
 	log    logr.Logger
 }
 
 // ImageProxy forwards ImageService calls to an upstream runtime unchanged.
+// Embedding UnimplementedImageServiceServer satisfies the gRPC interface guard.
 type ImageProxy struct {
+	runtimeapi.UnimplementedImageServiceServer
 	client runtimeapi.ImageServiceClient
 	log    logr.Logger
 }
@@ -281,7 +287,47 @@ func (p *RuntimeProxy) UpdatePodSandboxResources(ctx context.Context, in *runtim
 	return p.client.UpdatePodSandboxResources(ctx, in)
 }
 
-// GetContainerEvents is the only server-streaming RPC; relay events one by one.
+// StreamContainers relays a server-streaming container list from the upstream runtime.
+func (p *RuntimeProxy) StreamContainers(in *runtimeapi.StreamContainersRequest, srv runtimeapi.RuntimeService_StreamContainersServer) error {
+	upstream, err := p.client.StreamContainers(srv.Context(), in)
+	if err != nil {
+		return err
+	}
+	for {
+		item, err := upstream.Recv()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if err := srv.Send(item); err != nil {
+			return err
+		}
+	}
+}
+
+// StreamContainerStats relays a server-streaming stats stream from the upstream runtime.
+func (p *RuntimeProxy) StreamContainerStats(in *runtimeapi.StreamContainerStatsRequest, srv runtimeapi.RuntimeService_StreamContainerStatsServer) error {
+	upstream, err := p.client.StreamContainerStats(srv.Context(), in)
+	if err != nil {
+		return err
+	}
+	for {
+		ev, err := upstream.Recv()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if err := srv.Send(ev); err != nil {
+			return err
+		}
+	}
+}
+
+// GetContainerEvents relays a server-streaming event stream from the upstream runtime.
 func (p *RuntimeProxy) GetContainerEvents(in *runtimeapi.GetEventsRequest, srv runtimeapi.RuntimeService_GetContainerEventsServer) error {
 	upstream, err := p.client.GetContainerEvents(srv.Context(), in)
 	if err != nil {
@@ -321,4 +367,24 @@ func (p *ImageProxy) RemoveImage(ctx context.Context, in *runtimeapi.RemoveImage
 
 func (p *ImageProxy) ImageFsInfo(ctx context.Context, in *runtimeapi.ImageFsInfoRequest) (*runtimeapi.ImageFsInfoResponse, error) {
 	return p.client.ImageFsInfo(ctx, in)
+}
+
+// StreamImages relays a server-streaming image stream from the upstream runtime.
+func (p *ImageProxy) StreamImages(in *runtimeapi.StreamImagesRequest, srv runtimeapi.ImageService_StreamImagesServer) error {
+	upstream, err := p.client.StreamImages(srv.Context(), in)
+	if err != nil {
+		return err
+	}
+	for {
+		img, err := upstream.Recv()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if err := srv.Send(img); err != nil {
+			return err
+		}
+	}
 }

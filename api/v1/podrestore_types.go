@@ -215,7 +215,3 @@ type PodRestoreList struct {
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []PodRestore `json:"items"`
 }
-
-func init() {
-	SchemeBuilder.Register(&PodRestore{}, &PodRestoreList{})
-}

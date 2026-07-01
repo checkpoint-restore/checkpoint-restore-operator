@@ -129,7 +129,3 @@ type CheckpointScheduleList struct {
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []CheckpointSchedule `json:"items"`
 }
-
-func init() {
-	SchemeBuilder.Register(&CheckpointSchedule{}, &CheckpointScheduleList{})
-}
