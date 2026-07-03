@@ -11,11 +11,15 @@ Sockets=cri-restore-proxy.socket
 Environment=CRI_PROXY_UPSTREAM=/run/containerd/containerd.sock
 Environment=CRI_PROXY_LISTEN=/run/cr-restore-proxy/cri-proxy.sock
 Environment=CRI_PROXY_HEALTH=127.0.0.1:18080
+Environment=CRI_PROXY_CHECKPOINT_DIR=/var/lib/kubelet/checkpoints
+Environment=CRI_PROXY_ALLOW_CROSS_NAMESPACE=false
 EnvironmentFile=-/etc/default/cri-restore-proxy
 ExecStart=/usr/local/bin/cri-proxy \
   --upstream=${CRI_PROXY_UPSTREAM} \
   --listen=${CRI_PROXY_LISTEN} \
-  --health-bind-address=${CRI_PROXY_HEALTH}
+  --health-bind-address=${CRI_PROXY_HEALTH} \
+  --checkpoint-dir=${CRI_PROXY_CHECKPOINT_DIR} \
+  --allow-cross-namespace=${CRI_PROXY_ALLOW_CROSS_NAMESPACE}
 Restart=always
 RestartSec=1
 

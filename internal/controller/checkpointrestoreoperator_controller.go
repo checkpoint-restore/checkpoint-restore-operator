@@ -17,12 +17,9 @@ limitations under the License.
 package controller
 
 import (
-	"archive/tar"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -32,9 +29,9 @@ import (
 	"time"
 
 	criuorgv1 "github.com/checkpoint-restore/checkpoint-restore-operator/api/v1"
+	"github.com/checkpoint-restore/checkpoint-restore-operator/internal/checkpointarchive"
 
 	metadata "github.com/checkpoint-restore/checkpointctl/lib"
-	"github.com/containers/storage/pkg/archive"
 	"github.com/go-logr/logr"
 	v1 "k8s.io/api/core/v1"
 	k8err "k8s.io/apimachinery/pkg/api/errors"
@@ -229,83 +226,13 @@ func (r *CheckpointRestoreOperatorReconciler) restartGarbageCollector() {
 	go GarbageCollector.runGarbageCollector()
 }
 
-// UntarFiles unpack only specified files from an archive to the destination directory.
-// Copied from checkpointctl
+// UntarFiles unpacks only the specified files from an archive to the
+// destination directory. It delegates to the shared checkpointarchive package
+// so the operator and the node-side CRI proxy apply identical hardened
+// extraction rules (exact entry matching, regular files only, traversal
+// guard, per-file size bound).
 func UntarFiles(src, dest string, files []string) error {
-	archiveFile, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = archiveFile.Close() }()
-
-	if err := iterateTarArchive(src, func(r *tar.Reader, header *tar.Header) error {
-		// Check if the current entry is one of the target files
-		for _, file := range files {
-			if strings.Contains(header.Name, file) {
-				// Create the destination folder
-				if err := os.MkdirAll(filepath.Join(dest, filepath.Dir(header.Name)), 0o644); err != nil {
-					return err
-				}
-				// Create the destination file
-				destFile, err := os.Create(filepath.Join(dest, header.Name))
-				if err != nil {
-					return err
-				}
-				defer func() { _ = destFile.Close() }()
-
-				// Copy the contents of the entry to the destination file
-				_, err = io.Copy(destFile, r)
-				if err != nil {
-					return err
-				}
-
-				// File successfully extracted, move to the next file
-				break
-			}
-		}
-		return nil
-	}); err != nil {
-		return fmt.Errorf("unpacking of checkpoint archive failed: %w", err)
-	}
-
-	return nil
-}
-
-// iterateTarArchive reads a tar archive from the specified input file,
-// decompresses it, and iterates through each entry, invoking the provided callback function.
-// Copied from checkpointctl
-func iterateTarArchive(archiveInput string, callback func(r *tar.Reader, header *tar.Header) error) error {
-	archiveFile, err := os.Open(archiveInput)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = archiveFile.Close() }()
-
-	// Decompress the archive
-	stream, err := archive.DecompressStream(archiveFile)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = stream.Close() }()
-
-	// Create a tar reader to read the files from the decompressed archive
-	tarReader := tar.NewReader(stream)
-
-	for {
-		header, err := tarReader.Next()
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				break
-			}
-			return err
-		}
-
-		if err = callback(tarReader, header); err != nil {
-			return err
-		}
-	}
-
-	return nil
+	return checkpointarchive.UntarFiles(src, dest, files)
 }
 
 type checkpointDetails struct {

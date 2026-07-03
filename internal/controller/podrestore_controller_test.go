@@ -309,13 +309,14 @@ var _ = Describe("PodRestoreReconciler", func() {
 
 	It("does not remove a pre-existing keep marker on deletion", func() {
 		dir := GinkgoT().TempDir()
-		archive := filepath.Join(dir, "checkpoint.tar")
+		archive := filepath.Join(dir, "checkpoint-redis_default-redis-x.tar")
 		Expect(os.WriteFile(archive, []byte("tar placeholder"), 0o600)).To(Succeed())
 		Expect(os.WriteFile(archive+".keep", []byte("manual pin"), 0o600)).To(Succeed())
 
 		pr := newPodRestore()
 		pr.Spec.Checkpoints[0].Path = archive
 		r := makeReconciler(pr, node())
+		r.CheckpointDir = dir
 		reconcileN(r, 2)
 
 		Expect(r.Delete(context.Background(), get(r))).To(Succeed())
@@ -346,9 +347,9 @@ var _ = Describe("PodRestoreReconciler", func() {
 		Expect(archive + ".keep").NotTo(BeAnExistingFile())
 	})
 
-	DescribeTable("validateCheckpointPath",
+	DescribeTable("checkpoint path shape validation",
 		func(path string, ok bool) {
-			err := validateCheckpointPath(path)
+			err := criuorgv1.ValidateCheckpointPath(path)
 			if ok {
 				Expect(err).NotTo(HaveOccurred())
 			} else {
@@ -363,4 +364,37 @@ var _ = Describe("PodRestoreReconciler", func() {
 		Entry("not a tar", "/var/lib/kubelet/checkpoints/cp.img", false),
 		Entry("trailing slash", "/var/lib/cp.tar/", false),
 	)
+
+	It("reports InvalidSpec when the archive is outside the checkpoint directory", func() {
+		pr := newPodRestore()
+		pr.Spec.Checkpoints[0].Path = "/tmp/checkpoint-redis_default-redis-x.tar"
+		r := makeReconciler(pr, node())
+		reconcileN(r, 2)
+
+		c := ready(r)
+		Expect(c.Reason).To(Equal("InvalidSpec"))
+		Expect(c.Message).To(ContainSubstring("not inside the checkpoint directory"))
+	})
+
+	It("reports InvalidSpec when the archive belongs to another namespace", func() {
+		pr := newPodRestore()
+		pr.Spec.Checkpoints[0].Path = "/var/lib/kubelet/checkpoints/checkpoint-redis_other-redis-x.tar"
+		r := makeReconciler(pr, node())
+		reconcileN(r, 2)
+
+		c := ready(r)
+		Expect(c.Reason).To(Equal("InvalidSpec"))
+		Expect(c.Message).To(ContainSubstring("does not belong to namespace"))
+	})
+
+	It("allows a foreign-namespace archive when AllowCrossNamespace is set", func() {
+		pr := newPodRestore()
+		pr.Spec.Checkpoints[0].Path = "/var/lib/kubelet/checkpoints/checkpoint-redis_other-redis-x.tar"
+		r := makeReconciler(pr, node())
+		r.AllowCrossNamespace = true
+		reconcileN(r, 2)
+
+		c := ready(r)
+		Expect(c.Reason).To(Equal("Restoring"))
+	})
 })

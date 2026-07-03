@@ -44,6 +44,7 @@ spec:
             - --upstream=/run/containerd/containerd.sock
             - --listen=/run/cr-restore-proxy/cri-proxy.sock
             - --health-bind-address=:8080
+            - --checkpoint-dir=/var/lib/kubelet/checkpoints
           securityContext:
             runAsUser: 0
             allowPrivilegeEscalation: false
@@ -72,6 +73,9 @@ spec:
               readOnly: true
             - name: proxy-sock
               mountPath: /run/cr-restore-proxy
+            - name: checkpoints
+              mountPath: /var/lib/kubelet/checkpoints
+              readOnly: true
       volumes:
         # Upstream runtime socket (adjust for CRI-O: /run/crio).
         - name: runtime-sock
@@ -82,4 +86,10 @@ spec:
         - name: proxy-sock
           hostPath:
             path: /run/cr-restore-proxy
+            type: DirectoryOrCreate
+        # Checkpoint archives, read to verify the namespace recorded inside an
+        # archive before a restore is allowed (read-only: the proxy never writes).
+        - name: checkpoints
+          hostPath:
+            path: /var/lib/kubelet/checkpoints
             type: DirectoryOrCreate

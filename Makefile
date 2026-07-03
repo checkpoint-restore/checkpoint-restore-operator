@@ -191,6 +191,8 @@ uninstall: manifests kustomize ## Uninstall CRDs from the K8s cluster specified 
 .PHONY: deploy
 deploy: manifests kustomize ## Deploy controller to the K8s cluster specified in ~/.kube/config.
 	cd config/manager && $(KUSTOMIZE) edit set image controller=${IMG}
+	# config/default includes config/admission, so the restore-annotation policy
+	# is applied here too and cannot be skipped by a `kubectl apply -k config/default`.
 	$(KUSTOMIZE) build config/default | $(KUBECTL) apply --server-side --force-conflicts -f -
 
 .PHONY: undeploy

@@ -12,6 +12,8 @@ env_dst="${ENV_DST:-/etc/default/cri-restore-proxy}"
 upstream="${CRI_PROXY_UPSTREAM:-/run/containerd/containerd.sock}"
 listen="${CRI_PROXY_LISTEN:-/run/cr-restore-proxy/cri-proxy.sock}"
 health="${CRI_PROXY_HEALTH:-127.0.0.1:18080}"
+checkpoint_dir="${CRI_PROXY_CHECKPOINT_DIR:-/var/lib/kubelet/checkpoints}"
+allow_cross_namespace="${CRI_PROXY_ALLOW_CROSS_NAMESPACE:-false}"
 
 if [[ ! -x "$bin_src" ]]; then
   echo "missing $bin_src; run 'make build-cri-proxy' first" >&2
@@ -37,6 +39,8 @@ cat >"$env_dst" <<EOF
 CRI_PROXY_UPSTREAM=$upstream
 CRI_PROXY_LISTEN=$listen
 CRI_PROXY_HEALTH=$health
+CRI_PROXY_CHECKPOINT_DIR=$checkpoint_dir
+CRI_PROXY_ALLOW_CROSS_NAMESPACE=$allow_cross_namespace
 EOF
 
 systemctl daemon-reload

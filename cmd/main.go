@@ -57,8 +57,16 @@ func main() {
 	var probeAddr string
 	var secureMetrics bool
 	var enableHTTP2 bool
+	var restoreCheckpointDir string
+	var restoreAllowCrossNamespace bool
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
+	flag.StringVar(&restoreCheckpointDir, "restore-checkpoint-dir", criuorgv1.DefaultCheckpointDir,
+		"The only directory PodRestore specs may reference checkpoint archives in. "+
+			"Must match the directory the kubelet writes checkpoints to (and the CRI proxy's --checkpoint-dir).")
+	flag.BoolVar(&restoreAllowCrossNamespace, "restore-allow-cross-namespace", false,
+		"Allow a PodRestore to reference a checkpoint taken in a different namespace. "+
+			"The CRI proxy's --allow-cross-namespace flag must also be set for such restores to proceed.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
 		"Enable leader election for controller manager. "+
@@ -156,8 +164,10 @@ func main() {
 		os.Exit(1)
 	}
 	if err := (&controller.PodRestoreReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:              mgr.GetClient(),
+		Scheme:              mgr.GetScheme(),
+		CheckpointDir:       restoreCheckpointDir,
+		AllowCrossNamespace: restoreAllowCrossNamespace,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "PodRestore")
 		os.Exit(1)

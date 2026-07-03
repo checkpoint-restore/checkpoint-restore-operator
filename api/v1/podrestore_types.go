@@ -19,6 +19,7 @@ package v1
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -33,6 +34,12 @@ import (
 // "restore.criu.org/checkpoint-path.web". A container without such an annotation
 // is created normally.
 const RestoreCheckpointPathAnnotationPrefix = "restore.criu.org/checkpoint-path."
+
+// DefaultCheckpointDir is the directory in which the kubelet checkpoint API
+// writes checkpoint archives. Both the PodRestore controller and the CRI
+// proxy confine restore paths to a single checkpoint directory and use this
+// as the default when none is configured.
+const DefaultCheckpointDir = "/var/lib/kubelet/checkpoints"
 
 // ValidateCheckpointPath rejects paths that are unsafe to hand to the node-side
 // restore mechanism: it requires an absolute, lexically-clean path (no "." or
@@ -54,6 +61,55 @@ func ValidateCheckpointPath(p string) error {
 	}
 	if filepath.Ext(p) != ".tar" {
 		return fmt.Errorf("checkpoint path %q must be a .tar archive", p)
+	}
+	return nil
+}
+
+// ValidateCheckpointPathInDir extends ValidateCheckpointPath with directory
+// confinement: the archive must live directly inside allowedDir (no
+// subdirectories). This is what stops a restore from being pointed at an
+// arbitrary .tar elsewhere on the node's filesystem — for example one an
+// attacker staged through a hostPath or emptyDir mount. An empty allowedDir
+// means "use DefaultCheckpointDir"; confinement is always enforced.
+func ValidateCheckpointPathInDir(p, allowedDir string) error {
+	if err := ValidateCheckpointPath(p); err != nil {
+		return err
+	}
+	if allowedDir == "" {
+		allowedDir = DefaultCheckpointDir
+	}
+	if filepath.Dir(p) != filepath.Clean(allowedDir) {
+		return fmt.Errorf("checkpoint path %q is not inside the checkpoint directory %q", p, allowedDir)
+	}
+	return nil
+}
+
+// ValidateCheckpointNamespaceHint checks the archive filename against the
+// kubelet checkpoint naming convention,
+//
+//	checkpoint-<pod>_<namespace>-<container>-<timestamp>.tar
+//
+// and rejects archives whose recorded namespace cannot be ns. Pod names
+// cannot contain "_", so the pod/namespace split is unambiguous; but
+// namespaces and container names may both contain "-", so the namespace
+// field itself is only prefix-checkable. This is therefore a coarse,
+// API-side gate: it reliably rejects archives from unrelated namespaces, but
+// a namespace that is a "-"-prefix of another (team vs team-prod) passes it.
+// The authoritative check happens at the node, where the CRI proxy compares
+// the namespace recorded *inside* the archive with the namespace of the pod
+// sandbox being created.
+func ValidateCheckpointNamespaceHint(p, ns string) error {
+	base := filepath.Base(p)
+	rest, ok := strings.CutPrefix(base, "checkpoint-")
+	if !ok {
+		return fmt.Errorf("checkpoint archive %q does not follow the kubelet naming convention checkpoint-<pod>_<namespace>-<container>-<timestamp>.tar", base)
+	}
+	_, after, ok := strings.Cut(rest, "_")
+	if !ok {
+		return fmt.Errorf("checkpoint archive %q does not follow the kubelet naming convention checkpoint-<pod>_<namespace>-<container>-<timestamp>.tar", base)
+	}
+	if !strings.HasPrefix(after, ns+"-") {
+		return fmt.Errorf("checkpoint archive %q does not belong to namespace %q", base, ns)
 	}
 	return nil
 }

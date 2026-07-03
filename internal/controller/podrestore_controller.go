@@ -26,7 +26,6 @@ import (
 	"sync"
 	"time"
 
-	metadata "github.com/checkpoint-restore/checkpointctl/lib"
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
@@ -40,6 +39,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	criuorgv1 "github.com/checkpoint-restore/checkpoint-restore-operator/api/v1"
+	"github.com/checkpoint-restore/checkpoint-restore-operator/internal/checkpointarchive"
 )
 
 const (
@@ -64,6 +64,22 @@ type podRestorePinMarker struct {
 type PodRestoreReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
+
+	// CheckpointDir is the only directory PodRestore specs may reference
+	// checkpoint archives in. Empty means criuorgv1.DefaultCheckpointDir;
+	// confinement is always enforced so the zero value fails secure. It must
+	// match the directory the kubelet writes checkpoints to (and the CRI
+	// proxy's --checkpoint-dir) if that was customized.
+	CheckpointDir string
+
+	// AllowCrossNamespace disables the archive-filename namespace check, which
+	// otherwise requires a checkpoint to have been taken in the PodRestore's
+	// own namespace. It is an operator-level (cluster admin) knob for
+	// deliberate cross-namespace restores; the node-side CRI proxy has an
+	// equivalent --allow-cross-namespace flag that must also be set, because
+	// the proxy independently verifies the namespace recorded inside the
+	// archive.
+	AllowCrossNamespace bool
 }
 
 // +kubebuilder:rbac:groups=criu.org,resources=podrestores,verbs=get;list;watch;create;update;patch;delete
@@ -125,19 +141,21 @@ func (r *PodRestoreReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	before := pr.Status.DeepCopy()
 
 	// A malformed spec is not retryable until the user edits it; report and stop.
-	if err := validateSpec(pr); err != nil {
-		setReady(&pr.Status, metav1.ConditionFalse, "InvalidSpec", err.Error())
+	if err := r.validateSpec(pr); err != nil {
+		setReady(pr, metav1.ConditionFalse, "InvalidSpec", err.Error())
 		return r.saveStatus(ctx, pr, before, ctrl.Result{})
 	}
 
 	// The target node must exist: NodeName pins the Pod to it and bypasses the
 	// scheduler, so a bad node otherwise yields a Pod stuck Pending with no signal.
+	// The controller does not watch Nodes, so requeue: a target node that joins
+	// later must be picked up without waiting for the cache resync.
 	node := &corev1.Node{}
 	if err := r.Get(ctx, client.ObjectKey{Name: pr.Spec.TargetNode}, node); err != nil {
 		if apierrors.IsNotFound(err) {
-			setReady(&pr.Status, metav1.ConditionFalse, "NodeNotFound",
+			setReady(pr, metav1.ConditionFalse, "NodeNotFound",
 				fmt.Sprintf("target node %q not found", pr.Spec.TargetNode))
-			return r.saveStatus(ctx, pr, before, ctrl.Result{})
+			return r.saveStatus(ctx, pr, before, ctrl.Result{RequeueAfter: 30 * time.Second})
 		}
 		return ctrl.Result{}, err
 	}
@@ -154,10 +172,10 @@ func (r *PodRestoreReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		}
 	}
 	if pinnedAll {
-		setPinned(&pr.Status, metav1.ConditionTrue, "Pinned",
+		setPinned(pr, metav1.ConditionTrue, "Pinned",
 			"Source checkpoints pinned against retention GC")
 	} else {
-		setPinned(&pr.Status, metav1.ConditionFalse, "PinNotEnforced",
+		setPinned(pr, metav1.ConditionFalse, "PinNotEnforced",
 			"Checkpoint archive is not reachable from the operator; pinning against retention GC is not enforced. Ensure the checkpoint is retained on "+pr.Spec.TargetNode+" for the duration of the restore.")
 	}
 
@@ -170,14 +188,16 @@ func (r *PodRestoreReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		// If we recorded a Pod earlier and it is now gone, that is drift: report it
 		// rather than silently re-restore.
 		if pr.Status.PodName != "" {
-			setReady(&pr.Status, metav1.ConditionFalse, "PodMissing", "restore Pod disappeared")
+			setReady(pr, metav1.ConditionFalse, "PodMissing", "restore Pod disappeared")
 			return r.saveStatus(ctx, pr, before, ctrl.Result{})
 		}
 		newPod, rerr := r.renderPod(logger, pr)
 		if rerr != nil {
 			logger.Error(rerr, "failed to render restore Pod")
-			setReady(&pr.Status, metav1.ConditionFalse, "RenderFailed", rerr.Error())
-			return r.saveStatus(ctx, pr, before, ctrl.Result{})
+			setReady(pr, metav1.ConditionFalse, "RenderFailed", rerr.Error())
+			// Rendering can fail transiently (the archive is not readable yet);
+			// no watch fires when it becomes readable, so poll.
+			return r.saveStatus(ctx, pr, before, ctrl.Result{RequeueAfter: 30 * time.Second})
 		}
 		if cerr := r.Create(ctx, newPod); cerr != nil {
 			if !apierrors.IsAlreadyExists(cerr) {
@@ -198,7 +218,7 @@ func (r *PodRestoreReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	// Adopt the Pod only if we own it; otherwise fail rather than report progress
 	// against a Pod we did not create.
 	if !metav1.IsControlledBy(pod, pr) {
-		setReady(&pr.Status, metav1.ConditionFalse, "PodConflict",
+		setReady(pr, metav1.ConditionFalse, "PodConflict",
 			fmt.Sprintf("a Pod named %q already exists and is not owned by this PodRestore", pod.Name))
 		return r.saveStatus(ctx, pr, before, ctrl.Result{})
 	}
@@ -206,26 +226,30 @@ func (r *PodRestoreReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 
 	switch pod.Status.Phase {
 	case corev1.PodRunning, corev1.PodSucceeded:
-		setReady(&pr.Status, metav1.ConditionTrue, "Restored", "Restored Pod is running")
+		setReady(pr, metav1.ConditionTrue, "Restored", "Restored Pod is running")
 		return r.saveStatus(ctx, pr, before, ctrl.Result{})
 	case corev1.PodFailed:
 		reason := pod.Status.Reason
 		if reason == "" {
 			reason = "the restore Pod entered the Failed phase"
 		}
-		setReady(&pr.Status, metav1.ConditionFalse, "PodFailed", reason)
+		setReady(pr, metav1.ConditionFalse, "PodFailed", reason)
 		return r.saveStatus(ctx, pr, before, ctrl.Result{})
 	default:
 		// Still pending/unknown; the Pod watch re-enqueues us, with a poll backstop.
-		setReady(&pr.Status, metav1.ConditionFalse, "Restoring", "Restore Pod is not yet running")
+		setReady(pr, metav1.ConditionFalse, "Restoring", "Restore Pod is not yet running")
 		return r.saveStatus(ctx, pr, before, ctrl.Result{RequeueAfter: 3 * time.Second})
 	}
 }
 
 // validateSpec rejects a spec that cannot produce a valid restore Pod, before any
 // side effects. It is deterministic, so callers treat its failure as terminal
-// until the spec changes.
-func validateSpec(pr *criuorgv1.PodRestore) error {
+// until the spec changes. Beyond structural checks it enforces the two access
+// controls: checkpoint paths are confined to r.CheckpointDir, and (unless
+// AllowCrossNamespace) the archive filename must record the PodRestore's own
+// namespace. The CRI proxy re-verifies the namespace authoritatively from the
+// data inside the archive.
+func (r *PodRestoreReconciler) validateSpec(pr *criuorgv1.PodRestore) error {
 	for key := range pr.Spec.Template.Annotations {
 		if strings.HasPrefix(key, criuorgv1.RestoreCheckpointPathAnnotationPrefix) {
 			return fmt.Errorf("template annotation %q is reserved for the PodRestore controller", key)
@@ -237,8 +261,13 @@ func validateSpec(pr *criuorgv1.PodRestore) error {
 		inTemplate[pr.Spec.Template.Spec.Containers[i].Name] = true
 	}
 	for _, cp := range pr.Spec.Checkpoints {
-		if err := validateCheckpointPath(cp.Path); err != nil {
+		if err := criuorgv1.ValidateCheckpointPathInDir(cp.Path, r.CheckpointDir); err != nil {
 			return fmt.Errorf("container %q: %w", cp.Container, err)
+		}
+		if !r.AllowCrossNamespace {
+			if err := criuorgv1.ValidateCheckpointNamespaceHint(cp.Path, pr.Namespace); err != nil {
+				return fmt.Errorf("container %q: %w", cp.Container, err)
+			}
 		}
 		if !inTemplate[cp.Container] {
 			return fmt.Errorf("container %q is not defined in the Pod template", cp.Container)
@@ -328,32 +357,27 @@ func (r *PodRestoreReconciler) saveStatus(
 	return result, nil
 }
 
-func setReady(s *criuorgv1.PodRestoreStatus, status metav1.ConditionStatus, reason, message string) {
-	meta.SetStatusCondition(&s.Conditions, metav1.Condition{
-		Type:    criuorgv1.ConditionReady,
-		Status:  status,
-		Reason:  reason,
-		Message: message,
+func setReady(pr *criuorgv1.PodRestore, status metav1.ConditionStatus, reason, message string) {
+	meta.SetStatusCondition(&pr.Status.Conditions, metav1.Condition{
+		Type:               criuorgv1.ConditionReady,
+		Status:             status,
+		ObservedGeneration: pr.Generation,
+		Reason:             reason,
+		Message:            message,
 	})
 }
 
 // setPinned records whether the source checkpoints are actually pinned against
 // the retention garbage collector. It is False (not an error) when the archive
 // is not reachable from the operator, which is the normal cross-node case.
-func setPinned(s *criuorgv1.PodRestoreStatus, status metav1.ConditionStatus, reason, message string) {
-	meta.SetStatusCondition(&s.Conditions, metav1.Condition{
-		Type:    criuorgv1.ConditionCheckpointsPinned,
-		Status:  status,
-		Reason:  reason,
-		Message: message,
+func setPinned(pr *criuorgv1.PodRestore, status metav1.ConditionStatus, reason, message string) {
+	meta.SetStatusCondition(&pr.Status.Conditions, metav1.Condition{
+		Type:               criuorgv1.ConditionCheckpointsPinned,
+		Status:             status,
+		ObservedGeneration: pr.Generation,
+		Reason:             reason,
+		Message:            message,
 	})
-}
-
-// validateCheckpointPath is defense in depth alongside the CRD's schema
-// validation. It delegates to criuorgv1.ValidateCheckpointPath so the controller
-// and the node-side CRI proxy enforce exactly the same rule.
-func validateCheckpointPath(p string) error {
-	return criuorgv1.ValidateCheckpointPath(p)
 }
 
 func containerIndex(containers []corev1.Container, name string) int {
@@ -370,24 +394,12 @@ func containerIndex(containers []corev1.Container, name string) int {
 // where the controller runs; if it is not, the user should set the container image
 // explicitly in the template.
 func readCheckpointBaseImage(logger logr.Logger, checkpointPath string) (string, error) {
-	tempDir, err := os.MkdirTemp("", "podrestore-image")
+	img, err := checkpointarchive.ReadBaseImage(checkpointPath)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("%w (set the container image explicitly if the archive is not reachable from the operator)", err)
 	}
-	defer func() { _ = os.RemoveAll(tempDir) }()
-
-	if err := UntarFiles(checkpointPath, tempDir, []string{"config.dump"}); err != nil {
-		return "", fmt.Errorf("extracting config.dump from %s: %w (set the container image explicitly if the archive is not reachable from the operator)", checkpointPath, err)
-	}
-	cfg, _, err := metadata.ReadContainerCheckpointConfigDump(tempDir)
-	if err != nil {
-		return "", fmt.Errorf("reading checkpoint config.dump: %w", err)
-	}
-	if cfg.RootfsImageName == "" {
-		return "", fmt.Errorf("checkpoint %s records no rootfsImageName; set the container image explicitly", checkpointPath)
-	}
-	logger.V(1).Info("resolved base image from checkpoint", "path", checkpointPath, "image", cfg.RootfsImageName)
-	return cfg.RootfsImageName, nil
+	logger.V(1).Info("resolved base image from checkpoint", "path", checkpointPath, "image", img)
+	return img, nil
 }
 
 // pinCheckpoint writes a .keep marker next to the archive so the garbage
@@ -493,16 +505,24 @@ func parsePodRestorePinMarker(data []byte) (*podRestorePinMarker, bool) {
 	return &marker, true
 }
 
+// writePodRestorePinMarker writes the marker atomically (temp file + rename) so
+// a crash mid-write can never leave a truncated marker: a corrupt marker parses
+// as unmanaged, which would strand the archive pinned until manually cleaned up.
 func writePodRestorePinMarker(path string, marker podRestorePinMarker) error {
 	data, err := json.Marshal(marker)
 	if err != nil {
 		return err
 	}
 	data = append(data, '\n')
-	if err := os.WriteFile(path, data, 0o600); err != nil {
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
 		return err
 	}
-	return os.Chmod(path, 0o600)
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
 }
 
 func containsString(items []string, want string) bool {

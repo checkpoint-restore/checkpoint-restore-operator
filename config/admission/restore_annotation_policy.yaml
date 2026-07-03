@@ -1,0 +1,56 @@
+# This ValidatingAdmissionPolicy reserves the restore.criu.org/checkpoint-path.*
+# annotations for the PodRestore controller: no other principal may set or change
+# them on a Pod. A restore runs a frozen process image with the Pod's identity,
+# so this annotation is a node-level privilege primitive and must not be settable
+# by ordinary users. The CRI proxy validates the path independently (fail-closed),
+# but this policy is the control that stops the annotation being attached at all.
+#
+# !!! COUPLED TO THE KUSTOMIZE IDENTITY OF THE OPERATOR !!!
+# The username below is hardcoded and is NOT rewritten by kustomize. It must equal
+#   system:serviceaccount:<namespace>:<namePrefix>controller-manager
+# built from config/default/kustomization.yaml (namespace + namePrefix) and the
+# ServiceAccount in config/rbac/service_account.yaml (name: controller-manager).
+# With the defaults that is:
+#   namespace  = checkpoint-restore-operator-system
+#   namePrefix = checkpoint-restore-operator-
+#   SA name    = controller-manager
+# If you change the namespace, the namePrefix, or the SA name, update the username
+# in the expression below to match, or the operator's own restore Pods will be
+# denied (restores break) while user Pods stay blocked.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: protect-restore-annotations
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups:
+          - ""
+        apiVersions:
+          - v1
+        operations:
+          - CREATE
+          - UPDATE
+        resources:
+          - pods
+  validations:
+    - expression: >-
+        request.userInfo.username == 'system:serviceaccount:checkpoint-restore-operator-system:checkpoint-restore-operator-controller-manager' ||
+        !has(object.metadata.annotations) ||
+        object.metadata.annotations.all(k,
+          !k.startsWith('restore.criu.org/checkpoint-path.') ||
+          (oldObject != null &&
+           has(oldObject.metadata.annotations) &&
+           k in oldObject.metadata.annotations &&
+           object.metadata.annotations[k] == oldObject.metadata.annotations[k]))
+      message: restore.criu.org/checkpoint-path.* annotations can only be set or changed by the PodRestore controller
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: protect-restore-annotations
+spec:
+  policyName: protect-restore-annotations
+  validationActions:
+    - Deny

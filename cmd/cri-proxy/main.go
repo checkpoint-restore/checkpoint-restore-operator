@@ -40,6 +40,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
+	criuorgv1 "github.com/checkpoint-restore/checkpoint-restore-operator/api/v1"
 	"github.com/checkpoint-restore/checkpoint-restore-operator/internal/criproxy"
 )
 
@@ -158,10 +159,18 @@ func main() {
 	var upstream, listen string
 	var upstreamTimeout, healthTimeout time.Duration
 	var healthAddr string
+	var checkpointDir string
+	var allowCrossNamespace bool
 	flag.StringVar(&upstream, "upstream", "/run/containerd/containerd.sock",
 		"path to the real container runtime CRI socket to forward to")
 	flag.StringVar(&listen, "listen", "/run/cr-restore-proxy/cri-proxy.sock",
 		"path to the unix socket this proxy listens on (point the kubelet here)")
+	flag.StringVar(&checkpointDir, "checkpoint-dir", criuorgv1.DefaultCheckpointDir,
+		"the only directory restore annotations may reference checkpoint archives in; "+
+			"must match the directory the kubelet checkpoint API writes to")
+	flag.BoolVar(&allowCrossNamespace, "allow-cross-namespace", false,
+		"allow restoring a checkpoint into a pod sandbox in a different namespace "+
+			"than the one recorded inside the archive")
 	flag.DurationVar(&upstreamTimeout, "upstream-timeout", 10*time.Second,
 		"timeout for the startup check against the upstream runtime")
 	flag.StringVar(&healthAddr, "health-bind-address", ":8080",
@@ -214,7 +223,10 @@ func main() {
 		grpc.MaxSendMsgSize(maxMsgSize),
 	)
 	runtimeapi.RegisterRuntimeServiceServer(server,
-		criproxy.NewRuntimeProxy(runtimeClient, log))
+		criproxy.NewRuntimeProxy(runtimeClient, criproxy.Options{
+			CheckpointDir:       checkpointDir,
+			AllowCrossNamespace: allowCrossNamespace,
+		}, log))
 	runtimeapi.RegisterImageServiceServer(server,
 		criproxy.NewImageProxy(imageClient, log))
 
@@ -228,9 +240,12 @@ func main() {
 			ReadHeaderTimeout: 2 * time.Second,
 		}
 		go func() {
+			// The health endpoint is observability only. The proxy sits in the
+			// kubelet's container-creation critical path, so a failure here
+			// (e.g. the port is taken) must not stop the CRI server: readiness
+			// goes dark, container creation keeps working.
 			if err := healthServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-				log.Error(err, "health server failed", "addr", healthAddr)
-				server.Stop()
+				log.Error(err, "health server failed; /readyz is unavailable but the proxy keeps serving", "addr", healthAddr)
 			}
 		}()
 	}

@@ -43,8 +43,18 @@ spec:
 
 The controller pins the source checkpoint (a `.keep` marker, see
 [retention_policy.md](retention_policy.md)) so it is not garbage-collected during
-the restore, and tracks progress in `status.phase`
-(`Pending → Restoring → Running`/`Failed`).
+the restore when the archive is reachable from the operator. Cross-node, it
+reports `CheckpointsPinned=False` and you must retain the archive on the target
+node yourself. Progress is reported through status conditions: `Ready` is the
+summary (`True` once the restored Pod runs), and its `reason` carries the detail:
+`Restoring`, `RenderFailed`, `NodeNotFound`, `InvalidSpec`, `PodConflict`,
+`PodFailed`, `PodMissing`, or `Restored`. `CheckpointsPinned` reports retention
+pinning. There is no `phase` field; read the conditions:
+
+```sh
+kubectl get podrestore redis-restore \
+  -o jsonpath='{.status.conditions[?(@.type=="Ready")].reason}{"\n"}'
+```
 
 Notes:
 
@@ -54,6 +64,8 @@ Notes:
   restore. Set it explicitly if the operator cannot read the archive to discover
   the base image itself.
 - The checkpoint `.tar` must already exist on `targetNode`.
+- `targetNode`, `checkpoints`, and `template` are immutable. Create a new
+  `PodRestore` when you need to change the restored workload.
 
 ## Deploying the CRI proxy
 
@@ -87,6 +99,14 @@ The systemd deployment uses socket activation, so the kubelet can connect to the
 CRI socket even if the proxy process is still starting or has just restarted;
 systemd starts the service and queues the connection until the proxy accepts it.
 
+The admission policy that reserves the restore annotations for the PodRestore
+controller is part of `config/default`, so both `make deploy` and a manual
+`kubectl apply --server-side -k config/default` install it. There is no separate
+step to forget. (Server-side apply is required: the PodRestore CRD embeds a full
+`PodTemplateSpec` and exceeds the 256 KiB limit of client-side apply's
+last-applied-configuration annotation, which is also why the Makefile targets
+use `--server-side`.)
+
 ## Security
 
 The proxy speaks to the runtime socket and the restore lets a Pod run from
@@ -96,3 +116,30 @@ arbitrary checkpoint state, so:
   `0600`).
 - Restrict who may create `PodRestore` resources (RBAC), since a restore runs a
   frozen process image as a Pod.
+- Keep the default `ValidatingAdmissionPolicy` installed. It denies direct use
+  of `restore.criu.org/checkpoint-path.*` on ordinary Pods and allows the
+  operator service account to create the annotated restore Pod. If you customize
+  the deployment namespace, name prefix, or service account name, update the
+  hardcoded username in the policy expression in
+  `config/admission/restore_annotation_policy.yaml` to match (see the comment at
+  the top of that file).
+- Checkpoint paths are confined to a single directory, the one the kubelet
+  checkpoint API writes to (`/var/lib/kubelet/checkpoints` by default). Both the
+  controller (`--restore-checkpoint-dir`) and the proxy (`--checkpoint-dir`)
+  enforce this independently, so a forged annotation cannot point the runtime at
+  a `.tar` staged elsewhere on the node (for example through a `hostPath` or
+  `emptyDir` mount). If you customize the kubelet checkpoint directory, set both
+  flags to match.
+- Restores are namespace-confined. The controller checks the archive filename
+  against the PodRestore's namespace (a coarse gate; the kubelet naming
+  convention is only prefix-checkable); the proxy performs the authoritative
+  check by comparing the namespace recorded *inside* the archive by the runtime
+  at checkpoint time with the namespace of the pod sandbox being created, and
+  fails closed when the archive is unreadable or records no namespace. To permit
+  deliberate cross-namespace restores, a cluster admin must set **both** the
+  operator's `--restore-allow-cross-namespace` and the proxy's
+  `--allow-cross-namespace` flags.
+- The CRI proxy validates all of the above independently before handing the
+  path to the runtime — it does not trust the annotation — but it cannot tell an
+  authorized annotation from a forged one within the same namespace and
+  directory; that is the admission policy's job. Do not rely on the proxy alone.

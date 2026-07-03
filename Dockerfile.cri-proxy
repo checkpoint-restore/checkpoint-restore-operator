@@ -9,7 +9,9 @@ COPY go.sum go.sum
 # This repository vendors its dependencies; build from vendor/ for reproducibility.
 COPY vendor/ vendor/
 COPY cmd/cri-proxy/ cmd/cri-proxy/
-COPY internal/criproxy/ internal/criproxy/
+# internal/ wholesale: the proxy imports internal/checkpointarchive as well as
+# internal/criproxy, and go build only compiles what it actually reaches.
+COPY internal/ internal/
 COPY api/ api/
 
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} \
