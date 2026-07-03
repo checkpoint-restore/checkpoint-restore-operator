@@ -16,6 +16,12 @@ rules:
 - apiGroups:
   - ""
   resources:
+  - nodes/checkpoint
+  verbs:
+  - create
+- apiGroups:
+  - ""
+  resources:
   - nodes/proxy
   verbs:
   - create

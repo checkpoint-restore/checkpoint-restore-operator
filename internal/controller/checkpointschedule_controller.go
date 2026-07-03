@@ -38,6 +38,7 @@ import (
 //+kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;patch
 //+kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
 //+kubebuilder:rbac:groups="",resources=nodes/proxy,verbs=get;create
+//+kubebuilder:rbac:groups="",resources=nodes/checkpoint,verbs=create
 //+kubebuilder:rbac:groups=metrics.k8s.io,resources=pods,verbs=get;list
 
 const checkpointScheduleFinalizer = "criu.org/checkpoint-schedule-finalizer"
