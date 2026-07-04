@@ -23,3 +23,5 @@ resources:
 - forensicsnapshotchain_admin_role.yaml
 - forensicsnapshotchain_editor_role.yaml
 - forensicsnapshotchain_viewer_role.yaml
+- podrestore_editor_role.yaml
+- podrestore_viewer_role.yaml

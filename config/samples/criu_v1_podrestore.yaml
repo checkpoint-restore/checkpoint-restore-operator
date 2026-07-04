@@ -1,0 +1,24 @@
+apiVersion: criu.org/v1
+kind: PodRestore
+metadata:
+  name: redis-restore
+  namespace: default
+spec:
+  # The node that holds the checkpoint archive(s); the restored Pod is pinned here.
+  targetNode: worker-1
+  # Map each container to restore to its on-node checkpoint .tar.
+  checkpoints:
+    - container: redis
+      path: /var/lib/kubelet/checkpoints/checkpoint-redis-pod_default-redis-2026-06-29T12:00:00Z.tar
+  # The restored workload. The controller pins the Pod to targetNode, annotates
+  # the "redis" container with its checkpoint path, and (since the image is left
+  # empty below) fills in the base image recorded in the checkpoint. Set the image
+  # explicitly here if the operator cannot read the archive itself.
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+        - name: redis
+          # image: redis:7.0   # optional; derived from the checkpoint when omitted

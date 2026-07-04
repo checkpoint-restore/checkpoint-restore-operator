@@ -11,10 +11,12 @@ COPY go.sum go.sum
 # and so that source changes don't invalidate our downloaded layer
 RUN go mod download
 
-# Copy the go source
+# Copy the go source. Copy internal/ wholesale: the controllers import other
+# internal packages (e.g. internal/checkpointarchive), and go build only
+# compiles what cmd/main.go actually reaches, so the extra directories are free.
 COPY cmd/main.go cmd/main.go
 COPY api/ api/
-COPY internal/controller/ internal/controller/
+COPY internal/ internal/
 
 # Build
 # the GOARCH has not a default value to allow the binary be built according to the host where the command

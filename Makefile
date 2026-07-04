@@ -142,6 +142,19 @@ docker-build: test ## Build docker image with the manager.
 docker-push: ## Push docker image with the manager.
 	$(CONTAINER_TOOL) push ${IMG}
 
+CRI_PROXY_IMG ?= cri-proxy:latest
+.PHONY: build-cri-proxy
+build-cri-proxy: ## Build the node-side CRI proxy binary.
+	go build -o bin/cri-proxy cmd/cri-proxy/main.go
+
+.PHONY: docker-build-cri-proxy
+docker-build-cri-proxy: ## Build docker image for the node-side CRI proxy.
+	$(CONTAINER_TOOL) build -f Dockerfile.cri-proxy -t ${CRI_PROXY_IMG} .
+
+.PHONY: docker-push-cri-proxy
+docker-push-cri-proxy: ## Push the CRI proxy docker image.
+	$(CONTAINER_TOOL) push ${CRI_PROXY_IMG}
+
 # PLATFORMS defines the target platforms for  the manager image be build to provide support to multiple
 # architectures. (i.e. make docker-buildx IMG=myregistry/mypoperator:0.0.1). To use this option you need to:
 # - able to use docker buildx . More info: https://docs.docker.com/build/buildx/
@@ -167,7 +180,9 @@ endif
 
 .PHONY: install
 install: manifests kustomize ## Install CRDs into the K8s cluster specified in ~/.kube/config.
-	$(KUSTOMIZE) build config/crd | $(KUBECTL) apply -f -
+	# Server-side apply: the PodRestore CRD embeds a full PodTemplateSpec and
+	# exceeds the 256KB client-side last-applied-configuration annotation limit.
+	$(KUSTOMIZE) build config/crd | $(KUBECTL) apply --server-side --force-conflicts -f -
 
 .PHONY: uninstall
 uninstall: manifests kustomize ## Uninstall CRDs from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
@@ -176,7 +191,9 @@ uninstall: manifests kustomize ## Uninstall CRDs from the K8s cluster specified 
 .PHONY: deploy
 deploy: manifests kustomize ## Deploy controller to the K8s cluster specified in ~/.kube/config.
 	cd config/manager && $(KUSTOMIZE) edit set image controller=${IMG}
-	$(KUSTOMIZE) build config/default | $(KUBECTL) apply -f -
+	# config/default includes config/admission, so the restore-annotation policy
+	# is applied here too and cannot be skipped by a `kubectl apply -k config/default`.
+	$(KUSTOMIZE) build config/default | $(KUBECTL) apply --server-side --force-conflicts -f -
 
 .PHONY: undeploy
 undeploy: ## Undeploy controller from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.

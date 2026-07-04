@@ -112,9 +112,24 @@ Checkpoint archives are written by the kubelet to
 are subject to the retention policy configured with the
 `CheckpointRestoreOperator` resource described above.
 
+## Restoring from a Checkpoint
+
+The operator can also restore a checkpointed container as an ordinary Pod,
+using the container runtime's direct `.tar` restore path (skipping the slow
+conversion of the checkpoint into an OCI image). A `PodRestore` custom resource
+specifies the checkpoint archive, the target node, and a Pod template; the
+operator reconciles it into a node-pinned, annotated Pod, and a small per-node
+CRI proxy host service rewrites the container image to the checkpoint archive so
+the runtime restores it via CRIU. The default admission policy reserves the
+restore annotations for Pods created by the PodRestore controller. This works
+for both containerd and CRI-O.
+
+See [docs/restore.md](docs/restore.md) for the full design, a `PodRestore`
+example, how to deploy the CRI proxy, and the security considerations.
+
 ## Getting Started
 
-You’ll need a Kubernetes cluster to run against. You can use
+You'll need a Kubernetes cluster to run against. You can use
 [KIND](https://sigs.k8s.io/kind) to get a local cluster for testing, or run
 against a remote cluster.
 **Note:** Your controller will automatically use the current context in your

@@ -1,0 +1,14 @@
+[Unit]
+Description=Checkpoint Restore CRI Proxy Socket
+Documentation=https://github.com/checkpoint-restore/checkpoint-restore-operator
+Before=kubelet.service
+
+[Socket]
+ListenStream=/run/cr-restore-proxy/cri-proxy.sock
+SocketMode=0600
+DirectoryMode=0700
+RemoveOnStop=true
+Service=cri-restore-proxy.service
+
+[Install]
+WantedBy=sockets.target

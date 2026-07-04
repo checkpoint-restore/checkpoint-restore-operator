@@ -160,7 +160,3 @@ type ForensicSnapshotChainList struct {
 	metav1.ListMeta `json:"metadata,omitzero"`
 	Items           []ForensicSnapshotChain `json:"items"`
 }
-
-func init() {
-	SchemeBuilder.Register(&ForensicSnapshotChain{}, &ForensicSnapshotChainList{})
-}

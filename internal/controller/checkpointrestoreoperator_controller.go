@@ -17,12 +17,9 @@ limitations under the License.
 package controller
 
 import (
-	"archive/tar"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -32,9 +29,9 @@ import (
 	"time"
 
 	criuorgv1 "github.com/checkpoint-restore/checkpoint-restore-operator/api/v1"
+	"github.com/checkpoint-restore/checkpoint-restore-operator/internal/checkpointarchive"
 
 	metadata "github.com/checkpoint-restore/checkpointctl/lib"
-	"github.com/containers/storage/pkg/archive"
 	"github.com/go-logr/logr"
 	v1 "k8s.io/api/core/v1"
 	k8err "k8s.io/apimachinery/pkg/api/errors"
@@ -229,83 +226,13 @@ func (r *CheckpointRestoreOperatorReconciler) restartGarbageCollector() {
 	go GarbageCollector.runGarbageCollector()
 }
 
-// UntarFiles unpack only specified files from an archive to the destination directory.
-// Copied from checkpointctl
+// UntarFiles unpacks only the specified files from an archive to the
+// destination directory. It delegates to the shared checkpointarchive package
+// so the operator and the node-side CRI proxy apply identical hardened
+// extraction rules (exact entry matching, regular files only, traversal
+// guard, per-file size bound).
 func UntarFiles(src, dest string, files []string) error {
-	archiveFile, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = archiveFile.Close() }()
-
-	if err := iterateTarArchive(src, func(r *tar.Reader, header *tar.Header) error {
-		// Check if the current entry is one of the target files
-		for _, file := range files {
-			if strings.Contains(header.Name, file) {
-				// Create the destination folder
-				if err := os.MkdirAll(filepath.Join(dest, filepath.Dir(header.Name)), 0o644); err != nil {
-					return err
-				}
-				// Create the destination file
-				destFile, err := os.Create(filepath.Join(dest, header.Name))
-				if err != nil {
-					return err
-				}
-				defer func() { _ = destFile.Close() }()
-
-				// Copy the contents of the entry to the destination file
-				_, err = io.Copy(destFile, r)
-				if err != nil {
-					return err
-				}
-
-				// File successfully extracted, move to the next file
-				break
-			}
-		}
-		return nil
-	}); err != nil {
-		return fmt.Errorf("unpacking of checkpoint archive failed: %w", err)
-	}
-
-	return nil
-}
-
-// iterateTarArchive reads a tar archive from the specified input file,
-// decompresses it, and iterates through each entry, invoking the provided callback function.
-// Copied from checkpointctl
-func iterateTarArchive(archiveInput string, callback func(r *tar.Reader, header *tar.Header) error) error {
-	archiveFile, err := os.Open(archiveInput)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = archiveFile.Close() }()
-
-	// Decompress the archive
-	stream, err := archive.DecompressStream(archiveFile)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = stream.Close() }()
-
-	// Create a tar reader to read the files from the decompressed archive
-	tarReader := tar.NewReader(stream)
-
-	for {
-		header, err := tarReader.Next()
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				break
-			}
-			return err
-		}
-
-		if err = callback(tarReader, header); err != nil {
-			return err
-		}
-	}
-
-	return nil
+	return checkpointarchive.UntarFiles(src, dest, files)
 }
 
 type checkpointDetails struct {
@@ -603,9 +530,7 @@ func handleCheckpointsForLevel(log logr.Logger, details *checkpointDetails, leve
 					continue
 				}
 				log.Info("Deleting checkpoint archive due to retainCheckpoint=false", "archive", archive)
-				if err := os.Remove(archive); err != nil {
-					log.Error(err, "failed to remove checkpoint archive", "archive", archive)
-				}
+				removeArchiveUnlessPinned(log, archive)
 			}
 
 			return
@@ -637,9 +562,7 @@ func handleCheckpointsForLevel(log logr.Logger, details *checkpointDetails, leve
 				continue
 			}
 			log.Info("Deleting checkpoint archive due to exceeding MaxCheckpointSize", "archive", c, "size", currentSize.String(), "maxCheckpointSize", policy.MaxCheckpointSize.String())
-			if err := os.Remove(c); err != nil {
-				log.Error(err, "failed to remove checkpoint archive", "archive", c)
-			}
+			removeArchiveUnlessPinned(log, c)
 			// The archive is no longer retained; drop it from the count so the
 			// count-rotation phase below does not over-delete surviving archives.
 			checkpointArchivesCounter--
@@ -663,9 +586,7 @@ func handleCheckpointsForLevel(log logr.Logger, details *checkpointDetails, leve
 		toDelete := selectArchivesToDelete(log, deletableCandidates, archiveSizes, excessCount, ByCount)
 		for _, archive := range toDelete {
 			log.Info("Deleting checkpoint archive due to excess count", "archive", archive)
-			if err := os.Remove(archive); err != nil {
-				log.Error(err, "removal of checkpoint archive failed", "archive", archive)
-			}
+			removeArchiveUnlessPinned(log, archive)
 			checkpointArchivesCounter--
 			if checkpointArchivesCounter <= policy.MaxCheckpoints {
 				break
@@ -692,9 +613,7 @@ func handleCheckpointsForLevel(log logr.Logger, details *checkpointDetails, leve
 		toDelete := selectArchivesToDelete(log, deletableCandidates, archiveSizes, excessSize.Value(), BySize)
 		for _, archive := range toDelete {
 			log.Info("Deleting checkpoint archive due to excess size", "archive", archive)
-			if err := os.Remove(archive); err != nil {
-				log.Error(err, "removal of checkpoint archive failed", "archive", archive)
-			}
+			removeArchiveUnlessPinned(log, archive)
 			currentSize := resource.NewQuantity(archiveSizes[archive], resource.BinarySI)
 			totalSize.Sub(*currentSize)
 			delete(archiveSizes, archive)
@@ -983,7 +902,13 @@ func (gc *garbageCollector) runGarbageCollector() {
 	// based on fsnotify example code
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
-		log.Error(err, "runGarbageCollector()")
+		// Creating an inotify instance can fail ("too many open files" when
+		// fs.inotify.max_user_instances is exhausted). Continuing with a nil
+		// watcher would panic and crash-loop the whole operator; instead stay
+		// parked on quit so restartGarbageCollector (a policy change) can retry.
+		log.Error(err, "failed to create fsnotify watcher; retention garbage collection is disabled until the next policy change (check fs.inotify.max_user_instances)")
+		<-quit
+		return
 	}
 	defer func() { _ = watcher.Close() }()
 
@@ -993,21 +918,26 @@ func (gc *garbageCollector) runGarbageCollector() {
 	go gc.PodWatcher(log, c)
 
 	go func() {
+		// close(c), not a single send: c is read by the pod informer
+		// (controller.Run), PodWatcher's final wait, and runGarbageCollector's
+		// own <-c. A single send wakes only one of them, leaving the others
+		// running: either the old GC never releases gc.Lock (deadlocking the
+		// restarted GC) or informers pile up on every policy change.
 		for {
 			select {
 			case <-quit:
-				c <- struct{}{}
+				close(c)
 				return
 			case event, ok := <-watcher.Events:
 				if !ok {
-					c <- struct{}{}
+					close(c)
 					return
 				}
 				if !event.Has(fsnotify.Create) && !event.Has(fsnotify.Write) {
 					continue
 				}
-				if strings.HasSuffix(event.Name, ".keep") {
-					log.V(1).Info("skipping .keep file in GC event handler", "path", event.Name)
+				if strings.HasSuffix(event.Name, ".keep") || strings.HasSuffix(event.Name, ".keep.tmp") {
+					log.V(1).Info("skipping .keep marker file in GC event handler", "path", event.Name)
 					continue
 				}
 				// Get timer.
@@ -1030,7 +960,7 @@ func (gc *garbageCollector) runGarbageCollector() {
 
 			case err, ok := <-watcher.Errors:
 				if !ok {
-					c <- struct{}{}
+					close(c)
 					return
 				}
 				log.Error(err, "runGarbageCollector()")
@@ -1050,7 +980,9 @@ func (gc *garbageCollector) runGarbageCollector() {
 
 	err = watcher.Add(checkpointDirectory)
 	if err != nil {
-		log.Error(err, "runGarbageCollector()")
+		// Keep waiting on c rather than returning: the event goroutine above is
+		// already consuming quit, so a policy change can still restart the GC.
+		log.Error(err, "failed to watch checkpoint directory; retention garbage collection is disabled until the next policy change", "directory", checkpointDirectory)
 	}
 	<-c
 }

@@ -99,7 +99,3 @@ type CheckpointRestoreOperatorList struct {
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []CheckpointRestoreOperator `json:"items"`
 }
-
-func init() {
-	SchemeBuilder.Register(&CheckpointRestoreOperator{}, &CheckpointRestoreOperatorList{})
-}

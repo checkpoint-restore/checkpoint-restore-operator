@@ -16,7 +16,11 @@ limitations under the License.
 
 package controller
 
-import "os"
+import (
+	"os"
+
+	"github.com/go-logr/logr"
+)
 
 // isCheckpointPinned reports whether a checkpoint archive has a .keep marker file.
 // Existence of the marker is sufficient; its content is not validated.
@@ -25,6 +29,23 @@ import "os"
 func isCheckpointPinned(archivePath string) bool {
 	_, err := os.Stat(archivePath + ".keep")
 	return err == nil
+}
+
+// removeArchiveUnlessPinned deletes a checkpoint archive on behalf of the
+// retention GC, re-checking the .keep marker under the pin mutex immediately
+// before the unlink. Candidate selection happens earlier and unlocked, so
+// without this re-check a pin written by the PodRestore controller between
+// selection and deletion would be ignored and an in-use archive deleted.
+func removeArchiveUnlessPinned(log logr.Logger, archive string) {
+	podRestorePinMu.Lock()
+	defer podRestorePinMu.Unlock()
+	if isCheckpointPinned(archive) {
+		log.Info("checkpoint became pinned after selection; skipping deletion", "archive", archive)
+		return
+	}
+	if err := os.Remove(archive); err != nil {
+		log.Error(err, "removal of checkpoint archive failed", "archive", archive)
+	}
 }
 
 // partitionArchives splits archive paths into deletable and pinned slices.

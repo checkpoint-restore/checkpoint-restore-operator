@@ -1,0 +1,26 @@
+# Build the cri-proxy binary (node-side CRI proxy for PodRestore).
+FROM golang:latest AS builder
+ARG TARGETOS
+ARG TARGETARCH
+
+WORKDIR /workspace
+COPY go.mod go.mod
+COPY go.sum go.sum
+# This repository vendors its dependencies; build from vendor/ for reproducibility.
+COPY vendor/ vendor/
+COPY cmd/cri-proxy/ cmd/cri-proxy/
+# internal/ wholesale: the proxy imports internal/checkpointarchive as well as
+# internal/criproxy, and go build only compiles what it actually reaches.
+COPY internal/ internal/
+COPY api/ api/
+
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} \
+    go build -mod=vendor -a -o cri-proxy cmd/cri-proxy/main.go
+
+# Distroless static base. Runs as root because it must read the runtime socket
+# and create its own socket under a host path; the DaemonSet sets privileged.
+FROM gcr.io/distroless/static:latest
+WORKDIR /
+COPY --from=builder /workspace/cri-proxy .
+
+ENTRYPOINT ["/cri-proxy"]
