@@ -92,8 +92,9 @@ type ForensicSnapshotChainSpec struct {
 	Integrity IntegritySpec `json:"integrity,omitempty"`
 
 	// postSnapshotAction is the action to take after the snapshot run completes.
+	// +optional
 	// +kubebuilder:validation:Enum=None;DeletePod
-	// +kubebuilder:default=None
+	// +default="None"
 	PostSnapshotAction PostSnapshotAction `json:"postSnapshotAction,omitempty"`
 }
 
