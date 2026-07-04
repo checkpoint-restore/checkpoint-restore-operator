@@ -530,9 +530,7 @@ func handleCheckpointsForLevel(log logr.Logger, details *checkpointDetails, leve
 					continue
 				}
 				log.Info("Deleting checkpoint archive due to retainCheckpoint=false", "archive", archive)
-				if err := os.Remove(archive); err != nil {
-					log.Error(err, "failed to remove checkpoint archive", "archive", archive)
-				}
+				removeArchiveUnlessPinned(log, archive)
 			}
 
 			return
@@ -564,9 +562,7 @@ func handleCheckpointsForLevel(log logr.Logger, details *checkpointDetails, leve
 				continue
 			}
 			log.Info("Deleting checkpoint archive due to exceeding MaxCheckpointSize", "archive", c, "size", currentSize.String(), "maxCheckpointSize", policy.MaxCheckpointSize.String())
-			if err := os.Remove(c); err != nil {
-				log.Error(err, "failed to remove checkpoint archive", "archive", c)
-			}
+			removeArchiveUnlessPinned(log, c)
 			// The archive is no longer retained; drop it from the count so the
 			// count-rotation phase below does not over-delete surviving archives.
 			checkpointArchivesCounter--
@@ -590,9 +586,7 @@ func handleCheckpointsForLevel(log logr.Logger, details *checkpointDetails, leve
 		toDelete := selectArchivesToDelete(log, deletableCandidates, archiveSizes, excessCount, ByCount)
 		for _, archive := range toDelete {
 			log.Info("Deleting checkpoint archive due to excess count", "archive", archive)
-			if err := os.Remove(archive); err != nil {
-				log.Error(err, "removal of checkpoint archive failed", "archive", archive)
-			}
+			removeArchiveUnlessPinned(log, archive)
 			checkpointArchivesCounter--
 			if checkpointArchivesCounter <= policy.MaxCheckpoints {
 				break
@@ -619,9 +613,7 @@ func handleCheckpointsForLevel(log logr.Logger, details *checkpointDetails, leve
 		toDelete := selectArchivesToDelete(log, deletableCandidates, archiveSizes, excessSize.Value(), BySize)
 		for _, archive := range toDelete {
 			log.Info("Deleting checkpoint archive due to excess size", "archive", archive)
-			if err := os.Remove(archive); err != nil {
-				log.Error(err, "removal of checkpoint archive failed", "archive", archive)
-			}
+			removeArchiveUnlessPinned(log, archive)
 			currentSize := resource.NewQuantity(archiveSizes[archive], resource.BinarySI)
 			totalSize.Sub(*currentSize)
 			delete(archiveSizes, archive)
@@ -933,8 +925,8 @@ func (gc *garbageCollector) runGarbageCollector() {
 				if !event.Has(fsnotify.Create) && !event.Has(fsnotify.Write) {
 					continue
 				}
-				if strings.HasSuffix(event.Name, ".keep") {
-					log.V(1).Info("skipping .keep file in GC event handler", "path", event.Name)
+				if strings.HasSuffix(event.Name, ".keep") || strings.HasSuffix(event.Name, ".keep.tmp") {
+					log.V(1).Info("skipping .keep marker file in GC event handler", "path", event.Name)
 					continue
 				}
 				// Get timer.
