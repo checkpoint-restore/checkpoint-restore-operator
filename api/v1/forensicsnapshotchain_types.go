@@ -72,15 +72,18 @@ const (
 // ForensicSnapshotChainSpec defines the desired state of ForensicSnapshotChain
 type ForensicSnapshotChainSpec struct {
 	// namespace is the namespace containing the selected pods
+	// +required
 	Namespace string `json:"namespace"`
 
 	// selector identifies the target pods
+	// +required
 	Selector metav1.LabelSelector `json:"selector"`
 
 	// containerNames restricts the snapshotting to specific containers
 	// +optional
 	ContainerNames []string `json:"containerNames,omitempty"`
 	// capture defines snapshot collection
+	// +required
 	Capture CaptureSpec `json:"capture"`
 
 	// integrity defines integrity verification

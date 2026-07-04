@@ -24,9 +24,11 @@ import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 // initiate a checkpoint.
 type CheckpointScheduleSpec struct {
 	// namespace is the namespace in which pods are selected.
+	// +required
 	Namespace string `json:"namespace"`
 	// selector selects the pods to checkpoint by label. Only pods in the
 	// Running phase are checkpointed.
+	// +required
 	Selector metav1.LabelSelector `json:"selector"`
 	// containerNames restricts checkpointing to the named containers of a
 	// matching pod. When empty, all containers are checkpointed.
@@ -34,6 +36,7 @@ type CheckpointScheduleSpec struct {
 	ContainerNames []string `json:"containerNames,omitempty"`
 	// triggers describes what initiates a checkpoint. Multiple triggers can
 	// be combined.
+	// +required
 	Triggers TriggersSpec `json:"triggers"`
 }
 
@@ -116,11 +119,14 @@ type CheckpointScheduleStatus struct {
 type CheckpointSchedule struct {
 	metav1.TypeMeta `json:",inline"`
 	// metadata is the standard object metadata.
+	// +optional
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
 	// spec defines the desired state of CheckpointSchedule.
-	Spec CheckpointScheduleSpec `json:"spec,omitempty"`
+	// +required
+	Spec CheckpointScheduleSpec `json:"spec"`
 	// status defines the observed state of CheckpointSchedule.
+	// +optional
 	Status CheckpointScheduleStatus `json:"status,omitempty"`
 }
 
