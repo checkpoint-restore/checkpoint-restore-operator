@@ -74,6 +74,7 @@ spec:
                 items:
                   type: string
                 type: array
+                x-kubernetes-list-type: atomic
               integrity:
                 description: integrity defines integrity verification
                 properties:
@@ -218,6 +219,9 @@ spec:
                   - type
                   type: object
                 type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
               errorMessage:
                 description: errorMessage holds the most recent capture error, if
                   any.

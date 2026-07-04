@@ -81,6 +81,7 @@ type ForensicSnapshotChainSpec struct {
 
 	// containerNames restricts the snapshotting to specific containers
 	// +optional
+	// +listType=atomic
 	ContainerNames []string `json:"containerNames,omitempty"`
 	// capture defines snapshot collection
 	// +required
@@ -98,6 +99,13 @@ type ForensicSnapshotChainSpec struct {
 
 // ForensicSnapshotChainStatus defines the observed state of ForensicSnapshotChain.
 type ForensicSnapshotChainStatus struct {
+	// conditions represent the latest observations of the snapshot run state.
+	// +optional
+	// +listType=map
+	// +listMapKey=type
+	// +patchStrategy=merge
+	// +patchMergeKey=type
+	Conditions []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type" protobuf:"bytes,1,rep,name=conditions"`
 	// phase is the current high-level state of the snapshot run.
 	// +optional
 	Phase SnapshotChainPhase `json:"phase,omitempty"`
@@ -132,9 +140,6 @@ type ForensicSnapshotChainStatus struct {
 	// observedGeneration is the most recent generation observed by the controller.
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
-	// conditions represent the latest observations of the snapshot run state.
-	// +optional
-	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
 // +kubebuilder:object:root=true

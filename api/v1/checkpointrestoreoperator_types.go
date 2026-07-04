@@ -41,13 +41,16 @@ type CheckpointRestoreOperatorSpec struct {
 	// containerPolicies defines retention limits for checkpoints of specific
 	// containers.
 	// +optional
+	// +listType=atomic
 	ContainerPolicies []ContainerPolicySpec `json:"containerPolicies,omitempty"`
 	// podPolicies defines retention limits for checkpoints of specific pods.
 	// +optional
+	// +listType=atomic
 	PodPolicies []PodPolicySpec `json:"podPolicies,omitempty"`
 	// namespacePolicies defines retention limits for checkpoints in specific
 	// namespaces.
 	// +optional
+	// +listType=atomic
 	NamespacePolicies []NamespacePolicySpec `json:"namespacePolicies,omitempty"`
 }
 

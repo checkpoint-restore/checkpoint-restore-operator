@@ -47,6 +47,7 @@ spec:
                 items:
                   type: string
                 type: array
+                x-kubernetes-list-type: atomic
               namespace:
                 description: namespace is the namespace in which pods are selected.
                 type: string
@@ -128,6 +129,7 @@ spec:
                     items:
                       type: string
                     type: array
+                    x-kubernetes-list-type: atomic
                   resourceThreshold:
                     description: |-
                       resourceThreshold checkpoints a container when its CPU or memory usage
@@ -244,6 +246,9 @@ spec:
                   - type
                   type: object
                 type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
               lastCheckpointTime:
                 description: |-
                   lastCheckpointTime is when the interval trigger last checkpointed the

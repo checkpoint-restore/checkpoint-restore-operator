@@ -99,6 +99,7 @@ spec:
                       type: boolean
                   type: object
                 type: array
+                x-kubernetes-list-type: atomic
               globalPolicy:
                 description: |-
                   globalPolicy defines the retention limits applied to all checkpoints
@@ -200,6 +201,7 @@ spec:
                       type: boolean
                   type: object
                 type: array
+                x-kubernetes-list-type: atomic
               podPolicies:
                 description: podPolicies defines retention limits for checkpoints
                   of specific pods.
@@ -243,6 +245,7 @@ spec:
                       type: boolean
                   type: object
                 type: array
+                x-kubernetes-list-type: atomic
             type: object
           status:
             description: status defines the observed state of CheckpointRestoreOperator.

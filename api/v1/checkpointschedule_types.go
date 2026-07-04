@@ -33,6 +33,7 @@ type CheckpointScheduleSpec struct {
 	// containerNames restricts checkpointing to the named containers of a
 	// matching pod. When empty, all containers are checkpointed.
 	// +optional
+	// +listType=atomic
 	ContainerNames []string `json:"containerNames,omitempty"`
 	// triggers describes what initiates a checkpoint. Multiple triggers can
 	// be combined.
@@ -59,6 +60,7 @@ type TriggersSpec struct {
 	// PodEviction (the pod is being deleted) or Preemption (the pod has the
 	// DisruptionTarget condition, Kubernetes 1.26+).
 	// +optional
+	// +listType=atomic
 	OnKubernetesEvents []string `json:"onKubernetesEvents,omitempty"`
 	// onAnnotation enables on-demand checkpoints: annotating a matching pod
 	// with checkpoint.criu.org/trigger=true checkpoints it once and removes
@@ -98,6 +100,14 @@ type ResourceThresholdSpec struct {
 
 // CheckpointScheduleStatus defines the observed state of CheckpointSchedule
 type CheckpointScheduleStatus struct {
+	// conditions represent the latest available observations of the
+	// schedule's state.
+	// +optional
+	// +listType=map
+	// +listMapKey=type
+	// +patchStrategy=merge
+	// +patchMergeKey=type
+	Conditions []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type" protobuf:"bytes,1,rep,name=conditions"`
 	// lastCheckpointTime is when the interval trigger last checkpointed the
 	// matching pods.
 	// +optional
@@ -106,10 +116,6 @@ type CheckpointScheduleStatus struct {
 	// interval trigger.
 	// +optional
 	CheckpointsCreated int `json:"checkpointsCreated,omitempty"`
-	// conditions represent the latest available observations of the
-	// schedule's state.
-	// +optional
-	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
 //+kubebuilder:object:root=true
