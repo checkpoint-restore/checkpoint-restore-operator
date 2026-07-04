@@ -902,7 +902,13 @@ func (gc *garbageCollector) runGarbageCollector() {
 	// based on fsnotify example code
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
-		log.Error(err, "runGarbageCollector()")
+		// Creating an inotify instance can fail ("too many open files" when
+		// fs.inotify.max_user_instances is exhausted). Continuing with a nil
+		// watcher would panic and crash-loop the whole operator; instead stay
+		// parked on quit so restartGarbageCollector (a policy change) can retry.
+		log.Error(err, "failed to create fsnotify watcher; retention garbage collection is disabled until the next policy change (check fs.inotify.max_user_instances)")
+		<-quit
+		return
 	}
 	defer func() { _ = watcher.Close() }()
 
@@ -912,14 +918,19 @@ func (gc *garbageCollector) runGarbageCollector() {
 	go gc.PodWatcher(log, c)
 
 	go func() {
+		// close(c), not a single send: c is read by the pod informer
+		// (controller.Run), PodWatcher's final wait, and runGarbageCollector's
+		// own <-c. A single send wakes only one of them, leaving the others
+		// running: either the old GC never releases gc.Lock (deadlocking the
+		// restarted GC) or informers pile up on every policy change.
 		for {
 			select {
 			case <-quit:
-				c <- struct{}{}
+				close(c)
 				return
 			case event, ok := <-watcher.Events:
 				if !ok {
-					c <- struct{}{}
+					close(c)
 					return
 				}
 				if !event.Has(fsnotify.Create) && !event.Has(fsnotify.Write) {
@@ -949,7 +960,7 @@ func (gc *garbageCollector) runGarbageCollector() {
 
 			case err, ok := <-watcher.Errors:
 				if !ok {
-					c <- struct{}{}
+					close(c)
 					return
 				}
 				log.Error(err, "runGarbageCollector()")
@@ -969,7 +980,9 @@ func (gc *garbageCollector) runGarbageCollector() {
 
 	err = watcher.Add(checkpointDirectory)
 	if err != nil {
-		log.Error(err, "runGarbageCollector()")
+		// Keep waiting on c rather than returning: the event goroutine above is
+		// already consuming quit, so a policy change can still restart the GC.
+		log.Error(err, "failed to watch checkpoint directory; retention garbage collection is disabled until the next policy change", "directory", checkpointDirectory)
 	}
 	<-c
 }
