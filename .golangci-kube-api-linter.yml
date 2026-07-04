@@ -1,0 +1,55 @@
+# kube-api-linter (KAL) configuration, used only by the custom
+# ./bin/golangci-kube-api-linter binary against the API type packages.
+# It is intentionally NOT named .golangci.yml so the standard golangci-lint
+# job (which uses the upstream binary that does not know `kubeapilinter`) does
+# not try to load it.
+#
+# Run with:
+#   ./bin/golangci-kube-api-linter run -c .golangci-kube-api-linter.yml ./api/...
+version: "2"
+
+issues:
+  # KAL reports every sub-linter under the single "kubeapilinter" linter name,
+  # so golangci-lint's default caps (max-issues-per-linter=50, max-same-issues=3)
+  # silently hide findings. Disable both so CI never misses an issue.
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+linters:
+  default: none
+  enable:
+    - kubeapilinter
+  settings:
+    custom:
+      kubeapilinter:
+        type: module
+        description: Kube API Linter lints Kube like APIs based on API conventions and best practices.
+        settings:
+          # Enforce KAL's default (recommended) linter set, minus the linters
+          # deferred below. The opt-in linters (maxlength, minlength, nobools,
+          # ...) are intentionally left off for this first integration.
+          linters:
+            disable:
+              # --- Deferred: these require API/controller changes (not just
+              # markers) and are tracked as follow-up work, not enforced yet. ---
+              # Removing Phase fields is a deliberate redesign of the
+              # ForensicSnapshotChain state machine.
+              - nophase
+              # metav1.Duration fields (with CEL validation) are a deliberate
+              # choice; converting to integer-seconds changes the API contract.
+              - nodurations
+              # int -> int32/int64 changes Go types and controller code.
+              - integers
+              # Converting optional fields to pointers changes controller
+              # nil-handling and tests.
+              - optionalfields
+              # Requires marking a policy sub-field required (a validation
+              # change); needs verification against existing custom resources.
+              - arrayofstruct
+              # Resolving these requires MinProperties/optional contract
+              # changes tied to the deferred linters above.
+              - nonpointerstructs
+              # Wants top-level spec/status structs to be pointers, which
+              # changes the Go types and controller nil-handling.
+              - requiredfields
+          lintersConfig: {}

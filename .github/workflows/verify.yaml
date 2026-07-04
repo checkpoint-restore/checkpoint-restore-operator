@@ -42,6 +42,27 @@ jobs:
           shellcheck ./test/*.sh
           shfmt -d ./test/*.sh
 
+  kube-api-linter:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: "go.mod"
+
+      # kube-api-linter is a golangci-lint module, so it only exists inside a
+      # custom golangci-lint binary. Install that binary directly with
+      # `go install` (pinned to a pseudo-version, since the project has no
+      # tagged releases yet). Bump the version from
+      # https://pkg.go.dev/sigs.k8s.io/kube-api-linter?tab=versions
+      - name: Install kube-api-linter
+        run: go install sigs.k8s.io/kube-api-linter/cmd/golangci-lint-kube-api-linter@v0.0.0-20260518104151-5ebe05f9440b
+
+      - name: Lint API types
+        run: golangci-lint-kube-api-linter run -c .golangci-kube-api-linter.yml ./api/...
+
   gomod:
     runs-on: ubuntu-latest
     steps:

@@ -38,23 +38,22 @@ spec:
           metadata:
             type: object
           spec:
-            description: |-
-              CheckpointScheduleSpec defines which pods to checkpoint and what should
-              initiate a checkpoint.
+            description: spec defines the desired state of CheckpointSchedule.
             properties:
               containerNames:
                 description: |-
-                  ContainerNames restricts checkpointing to the named containers of a
+                  containerNames restricts checkpointing to the named containers of a
                   matching pod. When empty, all containers are checkpointed.
                 items:
                   type: string
                 type: array
+                x-kubernetes-list-type: atomic
               namespace:
-                description: Namespace is the namespace in which pods are selected.
+                description: namespace is the namespace in which pods are selected.
                 type: string
               selector:
                 description: |-
-                  Selector selects the pods to checkpoint by label. Only pods in the
+                  selector selects the pods to checkpoint by label. Only pods in the
                   Running phase are checkpointed.
                 properties:
                   matchExpressions:
@@ -102,12 +101,12 @@ spec:
                 x-kubernetes-map-type: atomic
               triggers:
                 description: |-
-                  Triggers describes what initiates a checkpoint. Multiple triggers can
+                  triggers describes what initiates a checkpoint. Multiple triggers can
                   be combined.
                 properties:
                   interval:
                     description: |-
-                      Interval is the time between periodic checkpoints of the matching
+                      interval is the time between periodic checkpoints of the matching
                       pods, expressed as a duration string (e.g. "30s", "15m", "12h"). The
                       first checkpoint is taken one interval after the CheckpointSchedule
                       is created.
@@ -117,59 +116,60 @@ spec:
                       rule: duration(self) >= duration('1s')
                   onAnnotation:
                     description: |-
-                      OnAnnotation enables on-demand checkpoints: annotating a matching pod
+                      onAnnotation enables on-demand checkpoints: annotating a matching pod
                       with checkpoint.criu.org/trigger=true checkpoints it once and removes
                       the annotation.
                     type: boolean
                   onKubernetesEvents:
                     description: |-
-                      OnKubernetesEvents lists pod disruption signals that trigger a
+                      onKubernetesEvents lists pod disruption signals that trigger a
                       checkpoint: NodeDrain (the pod's node is marked unschedulable),
                       PodEviction (the pod is being deleted) or Preemption (the pod has the
                       DisruptionTarget condition, Kubernetes 1.26+).
                     items:
                       type: string
                     type: array
+                    x-kubernetes-list-type: atomic
                   resourceThreshold:
                     description: |-
-                      ResourceThreshold checkpoints a container when its CPU or memory usage
+                      resourceThreshold checkpoints a container when its CPU or memory usage
                       crosses a configured percentage of its resource limit. Requires the
                       Kubernetes Metrics API (metrics-server).
                     properties:
                       cpuPercent:
-                        description: CPUPercent defines CPU usage bounds relative
+                        description: cpuPercent defines CPU usage bounds relative
                           to the container's limit.
                         properties:
                           lower:
                             description: |-
-                              Lower triggers a checkpoint when usage drops below this percentage of
+                              lower triggers a checkpoint when usage drops below this percentage of
                               the container's limit.
                             type: integer
                           upper:
                             description: |-
-                              Upper triggers a checkpoint when usage exceeds this percentage of the
+                              upper triggers a checkpoint when usage exceeds this percentage of the
                               container's limit.
                             type: integer
                         type: object
                       memoryPercent:
                         description: |-
-                          MemoryPercent defines memory usage bounds relative to the container's
+                          memoryPercent defines memory usage bounds relative to the container's
                           limit.
                         properties:
                           lower:
                             description: |-
-                              Lower triggers a checkpoint when usage drops below this percentage of
+                              lower triggers a checkpoint when usage drops below this percentage of
                               the container's limit.
                             type: integer
                           upper:
                             description: |-
-                              Upper triggers a checkpoint when usage exceeds this percentage of the
+                              upper triggers a checkpoint when usage exceeds this percentage of the
                               container's limit.
                             type: integer
                         type: object
                       pollIntervalSeconds:
                         description: |-
-                          PollIntervalSeconds is the number of seconds between metrics polls.
+                          pollIntervalSeconds is the number of seconds between metrics polls.
                           Defaults to 30.
                         type: integer
                     type: object
@@ -180,16 +180,16 @@ spec:
             - triggers
             type: object
           status:
-            description: CheckpointScheduleStatus defines the observed state of CheckpointSchedule
+            description: status defines the observed state of CheckpointSchedule.
             properties:
               checkpointsCreated:
                 description: |-
-                  CheckpointsCreated is the number of checkpoints created by the
+                  checkpointsCreated is the number of checkpoints created by the
                   interval trigger.
                 type: integer
               conditions:
                 description: |-
-                  Conditions represent the latest available observations of the
+                  conditions represent the latest available observations of the
                   schedule's state.
                 items:
                   description: Condition contains details for one aspect of the current
@@ -246,13 +246,18 @@ spec:
                   - type
                   type: object
                 type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
               lastCheckpointTime:
                 description: |-
-                  LastCheckpointTime is when the interval trigger last checkpointed the
+                  lastCheckpointTime is when the interval trigger last checkpointed the
                   matching pods.
                 format: date-time
                 type: string
             type: object
+        required:
+        - spec
         type: object
     served: true
     storage: true

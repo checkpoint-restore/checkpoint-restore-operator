@@ -41,7 +41,7 @@ spec:
             description: spec defines the desired state of ForensicSnapshotChain
             properties:
               capture:
-                description: Capture defines snapshot collection
+                description: capture defines snapshot collection
                 properties:
                   interval:
                     description: interval is the time between snapshots
@@ -50,15 +50,17 @@ spec:
                     - message: interval must be at least 1s
                       rule: duration(self) >= duration('1s')
                   maxDuration:
-                    description: maximum lifetime of the snapshot run
+                    description: maxDuration is the maximum lifetime of the snapshot
+                      run
                     type: string
                     x-kubernetes-validations:
                     - message: maxDuration must be at least 1s
                       rule: duration(self) >= duration('1s')
                   maxSnapshots:
                     description: |-
-                      maximum number of capture rounds to perform before completing the capture run.
-                      Each round checkpoints every selected container of every matching pod once.
+                      maxSnapshots is the maximum number of capture rounds to perform before
+                      completing the capture run. Each round checkpoints every selected
+                      container of every matching pod once.
                     format: int32
                     minimum: 1
                     type: integer
@@ -67,31 +69,33 @@ spec:
                 - message: at least one of maxSnapshots or maxDuration must be set
                   rule: has(self.maxSnapshots) || has(self.maxDuration)
               containerNames:
-                description: ContainerNames restricts the snapshotiing to specific
+                description: containerNames restricts the snapshotting to specific
                   containers
                 items:
                   type: string
                 type: array
+                x-kubernetes-list-type: atomic
               integrity:
-                description: Integrity defines integrity verification
+                description: integrity defines integrity verification
                 properties:
                   hashAlgorithm:
-                    description: defines the hash algorithm used to verify integrity
+                    description: hashAlgorithm defines the hash algorithm used to
+                      verify integrity
                     type: string
                 type: object
               namespace:
-                description: Namespace is the namespace containing the selected pods
+                description: namespace is the namespace containing the selected pods
                 type: string
               postSnapshotAction:
                 default: None
-                description: PostSnapshotAction defines the action to take after the
-                  snapshot run completes.
+                description: postSnapshotAction is the action to take after the snapshot
+                  run completes.
                 enum:
                 - None
                 - DeletePod
                 type: string
               selector:
-                description: Selector identifies the target pods
+                description: selector identifies the target pods
                 properties:
                   matchExpressions:
                     description: matchExpressions is a list of label selector requirements.
@@ -146,19 +150,19 @@ spec:
             properties:
               attemptCount:
                 description: |-
-                  AttemptCount is the number of capture rounds attempted so far,
+                  attemptCount is the number of capture rounds attempted so far,
                   including rounds in which no pods matched and nothing was captured.
                   It backstops termination of a maxSnapshots-only capture run whose selector
                   never matches; see the controller for details.
                 format: int32
                 type: integer
               completionTime:
-                description: CompletionTime is when the resource reached a terminal
+                description: completionTime is when the resource reached a terminal
                   phase.
                 format: date-time
                 type: string
               conditions:
-                description: Conditions represent the latest observations of the snapshot
+                description: conditions represent the latest observations of the snapshot
                   run state.
                 items:
                   description: Condition contains details for one aspect of the current
@@ -215,13 +219,16 @@ spec:
                   - type
                   type: object
                 type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
               errorMessage:
-                description: ErrorMessage holds the most recent capture error, if
+                description: errorMessage holds the most recent capture error, if
                   any.
                 type: string
               failureCount:
                 description: |-
-                  FailureCount is the number of consecutive capture rounds that failed
+                  failureCount is the number of consecutive capture rounds that failed
                   with a checkpoint error. It resets to zero after any round that did not
                   fail. When no maxDuration is configured it backstops termination of a
                   capture run whose target cannot be checkpointed, moving it to Failed rather
@@ -229,26 +236,26 @@ spec:
                 format: int32
                 type: integer
               lastSnapshotTime:
-                description: LastSnapshotTime is when the most recent capture round
+                description: lastSnapshotTime is when the most recent capture round
                   ran.
                 format: date-time
                 type: string
               observedGeneration:
-                description: ObservedGeneration is the most recent generation observed
+                description: observedGeneration is the most recent generation observed
                   by the controller.
                 format: int64
                 type: integer
               phase:
-                description: Phase is the current high-level state of the snapshot
+                description: phase is the current high-level state of the snapshot
                   run.
                 type: string
               snapshotCount:
-                description: SnapshotCount is the number of capture rounds completed
+                description: snapshotCount is the number of capture rounds completed
                   so far.
                 format: int32
                 type: integer
               startTime:
-                description: StartTime is when the resource entered the Pending phase.
+                description: startTime is when the resource entered the Pending phase.
                 format: date-time
                 type: string
             type: object

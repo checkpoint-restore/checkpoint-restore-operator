@@ -23,41 +23,46 @@ import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 // CheckpointScheduleSpec defines which pods to checkpoint and what should
 // initiate a checkpoint.
 type CheckpointScheduleSpec struct {
-	// Namespace is the namespace in which pods are selected.
+	// namespace is the namespace in which pods are selected.
+	// +required
 	Namespace string `json:"namespace"`
-	// Selector selects the pods to checkpoint by label. Only pods in the
+	// selector selects the pods to checkpoint by label. Only pods in the
 	// Running phase are checkpointed.
+	// +required
 	Selector metav1.LabelSelector `json:"selector"`
-	// ContainerNames restricts checkpointing to the named containers of a
+	// containerNames restricts checkpointing to the named containers of a
 	// matching pod. When empty, all containers are checkpointed.
 	// +optional
+	// +listType=atomic
 	ContainerNames []string `json:"containerNames,omitempty"`
-	// Triggers describes what initiates a checkpoint. Multiple triggers can
+	// triggers describes what initiates a checkpoint. Multiple triggers can
 	// be combined.
+	// +required
 	Triggers TriggersSpec `json:"triggers"`
 }
 
 // TriggersSpec describes what initiates a checkpoint.
 type TriggersSpec struct {
-	// Interval is the time between periodic checkpoints of the matching
+	// interval is the time between periodic checkpoints of the matching
 	// pods, expressed as a duration string (e.g. "30s", "15m", "12h"). The
 	// first checkpoint is taken one interval after the CheckpointSchedule
 	// is created.
 	// +optional
 	// +kubebuilder:validation:XValidation:rule="duration(self) >= duration('1s')",message="interval must be at least 1s"
 	Interval *metav1.Duration `json:"interval,omitempty"`
-	// ResourceThreshold checkpoints a container when its CPU or memory usage
+	// resourceThreshold checkpoints a container when its CPU or memory usage
 	// crosses a configured percentage of its resource limit. Requires the
 	// Kubernetes Metrics API (metrics-server).
 	// +optional
 	ResourceThreshold *ResourceThresholdSpec `json:"resourceThreshold,omitempty"`
-	// OnKubernetesEvents lists pod disruption signals that trigger a
+	// onKubernetesEvents lists pod disruption signals that trigger a
 	// checkpoint: NodeDrain (the pod's node is marked unschedulable),
 	// PodEviction (the pod is being deleted) or Preemption (the pod has the
 	// DisruptionTarget condition, Kubernetes 1.26+).
 	// +optional
+	// +listType=atomic
 	OnKubernetesEvents []string `json:"onKubernetesEvents,omitempty"`
-	// OnAnnotation enables on-demand checkpoints: annotating a matching pod
+	// onAnnotation enables on-demand checkpoints: annotating a matching pod
 	// with checkpoint.criu.org/trigger=true checkpoints it once and removes
 	// the annotation.
 	// +optional
@@ -67,11 +72,11 @@ type TriggersSpec struct {
 // ResourcePercentThreshold defines upper and lower percentage bounds for a
 // resource, relative to the container's resource limit.
 type ResourcePercentThreshold struct {
-	// Upper triggers a checkpoint when usage exceeds this percentage of the
+	// upper triggers a checkpoint when usage exceeds this percentage of the
 	// container's limit.
 	// +optional
 	Upper *int `json:"upper,omitempty"`
-	// Lower triggers a checkpoint when usage drops below this percentage of
+	// lower triggers a checkpoint when usage drops below this percentage of
 	// the container's limit.
 	// +optional
 	Lower *int `json:"lower,omitempty"`
@@ -80,14 +85,14 @@ type ResourcePercentThreshold struct {
 // ResourceThresholdSpec configures resource-usage based checkpointing.
 // Containers without a resource limit are skipped.
 type ResourceThresholdSpec struct {
-	// CPUPercent defines CPU usage bounds relative to the container's limit.
+	// cpuPercent defines CPU usage bounds relative to the container's limit.
 	// +optional
 	CPUPercent *ResourcePercentThreshold `json:"cpuPercent,omitempty"`
-	// MemoryPercent defines memory usage bounds relative to the container's
+	// memoryPercent defines memory usage bounds relative to the container's
 	// limit.
 	// +optional
 	MemoryPercent *ResourcePercentThreshold `json:"memoryPercent,omitempty"`
-	// PollIntervalSeconds is the number of seconds between metrics polls.
+	// pollIntervalSeconds is the number of seconds between metrics polls.
 	// Defaults to 30.
 	// +optional
 	PollIntervalSeconds *int `json:"pollIntervalSeconds,omitempty"`
@@ -95,18 +100,22 @@ type ResourceThresholdSpec struct {
 
 // CheckpointScheduleStatus defines the observed state of CheckpointSchedule
 type CheckpointScheduleStatus struct {
-	// LastCheckpointTime is when the interval trigger last checkpointed the
+	// conditions represent the latest available observations of the
+	// schedule's state.
+	// +optional
+	// +listType=map
+	// +listMapKey=type
+	// +patchStrategy=merge
+	// +patchMergeKey=type
+	Conditions []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type" protobuf:"bytes,1,rep,name=conditions"`
+	// lastCheckpointTime is when the interval trigger last checkpointed the
 	// matching pods.
 	// +optional
 	LastCheckpointTime *metav1.Time `json:"lastCheckpointTime,omitempty"`
-	// CheckpointsCreated is the number of checkpoints created by the
+	// checkpointsCreated is the number of checkpoints created by the
 	// interval trigger.
 	// +optional
 	CheckpointsCreated int `json:"checkpointsCreated,omitempty"`
-	// Conditions represent the latest available observations of the
-	// schedule's state.
-	// +optional
-	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
 //+kubebuilder:object:root=true
@@ -114,10 +123,16 @@ type CheckpointScheduleStatus struct {
 
 // CheckpointSchedule is the Schema for the checkpointschedules API
 type CheckpointSchedule struct {
-	metav1.TypeMeta   `json:",inline"`
+	metav1.TypeMeta `json:",inline"`
+	// metadata is the standard object metadata.
+	// +optional
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   CheckpointScheduleSpec   `json:"spec,omitempty"`
+	// spec defines the desired state of CheckpointSchedule.
+	// +required
+	Spec CheckpointScheduleSpec `json:"spec"`
+	// status defines the observed state of CheckpointSchedule.
+	// +optional
 	Status CheckpointScheduleStatus `json:"status,omitempty"`
 }
 

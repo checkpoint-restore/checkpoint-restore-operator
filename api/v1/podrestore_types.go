@@ -117,11 +117,13 @@ func ValidateCheckpointNamespaceHint(p, ns string) error {
 // ContainerCheckpoint maps a container in the Pod template to the checkpoint
 // archive it should be restored from.
 type ContainerCheckpoint struct {
-	// Container is the name of the container in the template to restore.
+	// container is the name of the container in the template to restore.
+	// +required
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=253
 	Container string `json:"container"`
-	// Path is the absolute path to the checkpoint .tar archive on the target node.
+	// path is the absolute path to the checkpoint .tar archive on the target node.
+	// +required
 	// +kubebuilder:validation:Pattern=`^/.*\.tar$`
 	// +kubebuilder:validation:MaxLength=4096
 	Path string `json:"path"`
@@ -129,19 +131,21 @@ type ContainerCheckpoint struct {
 
 // PodRestoreSpec defines the desired state of PodRestore.
 type PodRestoreSpec struct {
-	// TargetNode is the node that holds the checkpoint archives. The restored Pod
+	// targetNode is the node that holds the checkpoint archives. The restored Pod
 	// is pinned to this node because the archives are node-local. It is immutable:
 	// a restore targets one node's archives and cannot be repointed in place.
+	// +required
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=253
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="targetNode is immutable"
 	TargetNode string `json:"targetNode"`
 
-	// Checkpoints maps each container to restore to its on-node checkpoint archive.
+	// checkpoints maps each container to restore to its on-node checkpoint archive.
 	// Containers in the template that are not listed here are started normally.
 	// The list is keyed by container name, so each container may appear once. It is
 	// immutable: editing it after the restore Pod exists has no effect, so changes
 	// are rejected to avoid a misleading spec.
+	// +required
 	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:MaxItems=32
 	// +listType=map
@@ -149,11 +153,12 @@ type PodRestoreSpec struct {
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="checkpoints is immutable"
 	Checkpoints []ContainerCheckpoint `json:"checkpoints"`
 
-	// Template is the PodTemplateSpec describing the restored workload. The
+	// template is the PodTemplateSpec describing the restored workload. The
 	// controller injects the target node, the per-container restore annotation,
 	// and, for restored containers whose image is left empty, the base image
 	// recorded in the checkpoint (needed only to satisfy the kubelet image-pull
 	// gate; it plays no role in the actual restore).
+	// +required
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="template is immutable"
 	Template corev1.PodTemplateSpec `json:"template"`
 }
@@ -175,17 +180,19 @@ const (
 
 // PodRestoreStatus defines the observed state of PodRestore.
 type PodRestoreStatus struct {
-	// PodName is the name of the Pod created for this restore.
-	// +optional
-	PodName string `json:"podName,omitempty"`
-	// Conditions represent the latest observations of the restore state. The
+	// conditions represent the latest observations of the restore state. The
 	// "Ready" condition is the summary; "CheckpointsPinned" reports retention
 	// pinning. Read the condition reason/message for detail rather than a phase.
 	// +optional
 	// +listType=map
 	// +listMapKey=type
-	Conditions []metav1.Condition `json:"conditions,omitempty"`
-	// ObservedGeneration is the most recent generation observed by the controller.
+	// +patchStrategy=merge
+	// +patchMergeKey=type
+	Conditions []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type" protobuf:"bytes,1,rep,name=conditions"`
+	// podName is the name of the Pod created for this restore.
+	// +optional
+	PodName string `json:"podName,omitempty"`
+	// observedGeneration is the most recent generation observed by the controller.
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 }
@@ -200,10 +207,16 @@ type PodRestoreStatus struct {
 
 // PodRestore is the Schema for the podrestores API.
 type PodRestore struct {
-	metav1.TypeMeta   `json:",inline"`
+	metav1.TypeMeta `json:",inline"`
+	// metadata is the standard object metadata.
+	// +optional
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   PodRestoreSpec   `json:"spec,omitempty"`
+	// spec defines the desired state of PodRestore.
+	// +required
+	Spec PodRestoreSpec `json:"spec"`
+	// status defines the observed state of PodRestore.
+	// +optional
 	Status PodRestoreStatus `json:"status,omitempty"`
 }
 

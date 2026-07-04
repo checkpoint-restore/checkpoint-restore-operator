@@ -31,13 +31,14 @@ type CaptureSpec struct {
 	// +kubebuilder:validation:XValidation:rule="duration(self) >= duration('1s')",message="interval must be at least 1s"
 	Interval *metav1.Duration `json:"interval,omitempty"`
 
-	// maximum number of capture rounds to perform before completing the capture run.
-	// Each round checkpoints every selected container of every matching pod once.
+	// maxSnapshots is the maximum number of capture rounds to perform before
+	// completing the capture run. Each round checkpoints every selected
+	// container of every matching pod once.
 	// +optional
 	// +kubebuilder:validation:Minimum=1
 	MaxSnapshots *int32 `json:"maxSnapshots,omitempty"`
 
-	// maximum lifetime of the snapshot run
+	// maxDuration is the maximum lifetime of the snapshot run
 	// +optional
 	// +kubebuilder:validation:XValidation:rule="duration(self) >= duration('1s')",message="maxDuration must be at least 1s"
 	MaxDuration *metav1.Duration `json:"maxDuration,omitempty"`
@@ -45,7 +46,7 @@ type CaptureSpec struct {
 
 // IntegritySpec defines how to verify the integrity of snapshots
 type IntegritySpec struct {
-	//defines the hash algorithm used to verify integrity
+	// hashAlgorithm defines the hash algorithm used to verify integrity
 	// +optional
 	HashAlgorithm string `json:"hashAlgorithm,omitempty"`
 }
@@ -70,66 +71,76 @@ const (
 
 // ForensicSnapshotChainSpec defines the desired state of ForensicSnapshotChain
 type ForensicSnapshotChainSpec struct {
-	// Namespace is the namespace containing the selected pods
+	// namespace is the namespace containing the selected pods
+	// +required
 	Namespace string `json:"namespace"`
 
-	//Selector identifies the target pods
+	// selector identifies the target pods
+	// +required
 	Selector metav1.LabelSelector `json:"selector"`
 
-	//ContainerNames restricts the snapshotiing to specific containers
+	// containerNames restricts the snapshotting to specific containers
 	// +optional
+	// +listType=atomic
 	ContainerNames []string `json:"containerNames,omitempty"`
-	// Capture defines snapshot collection
+	// capture defines snapshot collection
+	// +required
 	Capture CaptureSpec `json:"capture"`
 
-	// Integrity defines integrity verification
+	// integrity defines integrity verification
 	// +optional
 	Integrity IntegritySpec `json:"integrity,omitempty"`
 
+	// postSnapshotAction is the action to take after the snapshot run completes.
+	// +optional
 	// +kubebuilder:validation:Enum=None;DeletePod
-	// +kubebuilder:default=None
+	// +default="None"
 	PostSnapshotAction PostSnapshotAction `json:"postSnapshotAction,omitempty"`
 }
 
 // ForensicSnapshotChainStatus defines the observed state of ForensicSnapshotChain.
 type ForensicSnapshotChainStatus struct {
-	// Phase is the current high-level state of the snapshot run.
+	// conditions represent the latest observations of the snapshot run state.
+	// +optional
+	// +listType=map
+	// +listMapKey=type
+	// +patchStrategy=merge
+	// +patchMergeKey=type
+	Conditions []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type" protobuf:"bytes,1,rep,name=conditions"`
+	// phase is the current high-level state of the snapshot run.
 	// +optional
 	Phase SnapshotChainPhase `json:"phase,omitempty"`
-	// SnapshotCount is the number of capture rounds completed so far.
+	// snapshotCount is the number of capture rounds completed so far.
 	// +optional
 	SnapshotCount int32 `json:"snapshotCount,omitempty"`
-	// AttemptCount is the number of capture rounds attempted so far,
+	// attemptCount is the number of capture rounds attempted so far,
 	// including rounds in which no pods matched and nothing was captured.
 	// It backstops termination of a maxSnapshots-only capture run whose selector
 	// never matches; see the controller for details.
 	// +optional
 	AttemptCount int32 `json:"attemptCount,omitempty"`
-	// FailureCount is the number of consecutive capture rounds that failed
+	// failureCount is the number of consecutive capture rounds that failed
 	// with a checkpoint error. It resets to zero after any round that did not
 	// fail. When no maxDuration is configured it backstops termination of a
 	// capture run whose target cannot be checkpointed, moving it to Failed rather
 	// than retrying forever.
 	// +optional
 	FailureCount int32 `json:"failureCount,omitempty"`
-	// StartTime is when the resource entered the Pending phase.
+	// startTime is when the resource entered the Pending phase.
 	// +optional
 	StartTime *metav1.Time `json:"startTime,omitempty"`
-	// LastSnapshotTime is when the most recent capture round ran.
+	// lastSnapshotTime is when the most recent capture round ran.
 	// +optional
 	LastSnapshotTime *metav1.Time `json:"lastSnapshotTime,omitempty"`
-	// CompletionTime is when the resource reached a terminal phase.
+	// completionTime is when the resource reached a terminal phase.
 	// +optional
 	CompletionTime *metav1.Time `json:"completionTime,omitempty"`
-	// ErrorMessage holds the most recent capture error, if any.
+	// errorMessage holds the most recent capture error, if any.
 	// +optional
 	ErrorMessage string `json:"errorMessage,omitempty"`
-	// ObservedGeneration is the most recent generation observed by the controller.
+	// observedGeneration is the most recent generation observed by the controller.
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
-	// Conditions represent the latest observations of the snapshot run state.
-	// +optional
-	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
 // +kubebuilder:object:root=true
