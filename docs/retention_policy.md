@@ -148,6 +148,45 @@ changes for a given scope and limit, not on every evaluation.
 A pinned archive that individually exceeds `maxCheckpointSize` is retained and logged
 (`checkpoint is pinned, skipping deletion`), but does not trigger the named-archive message above.
 
+### Operator-managed markers (PodRestore)
+
+The marker described above is the manual case: a file you create and remove yourself. The
+operator also creates markers on its own while a `PodRestore` is active, and these have a
+structured content that lets several restores share one archive safely.
+
+An operator-managed marker is a small JSON document (shown formatted here; on disk it is a
+single compact line):
+
+```json
+{
+  "managedBy": "checkpoint-restore-operator/podrestore",
+  "podRestoreOwners": ["default/redis-restore", "default/redis-restore-2"]
+}
+```
+
+Each owner is the `namespace/name` of a `PodRestore`. The `podRestoreOwners` list works like a
+reference count. When the `PodRestore` controller reconciles a live restore, it adds that
+restore to the list; when a restore is deleted, its cleanup removes just its own entry. The
+archive stays pinned as long as any owner remains, and the marker file is deleted only once the
+last owner is gone, so two restores pointing at the same checkpoint cannot unpin it out from
+under each other.
+
+The `managedBy` field is what separates these markers from manual ones. The operator only
+touches a marker whose `managedBy` matches its own identifier; a marker it cannot parse as its
+own (an empty file, free-text notes, or a different `managedBy`) is treated as a manual pin and
+left untouched. Manual pins and restore pins therefore never interfere.
+
+Managed markers are written atomically: the new contents are written to a `.keep.tmp` file next
+to the archive and then renamed onto `.keep`. This is why the `.keep` file only ever moves from
+one complete state to the next, and why a crash midway through an update cannot leave a
+half-written marker that strands the archive pinned or drops another restore's ownership. You
+may occasionally see a `.keep.tmp` file during an update; the GC ignores it, and it is not a
+checkpoint archive.
+
+For retention, a managed marker is just a `.keep` file: the GC only checks that the marker
+exists and never reads its content, so a managed pin counts toward the limits and is protected
+from deletion exactly like a manual one (see above).
+
 ### Unpinning a checkpoint
 
 Delete the `.keep` file to unpin a checkpoint:
@@ -159,3 +198,6 @@ rm /var/lib/kubelet/checkpoints/checkpoint-<pod>_<ns>-<container>-<timestamp>.ta
 The checkpoint becomes eligible for deletion on the **next GC cycle** (not immediately).
 The GC does not cache pinning state between cycles.
 
+This is the way to remove a manual pin. Removing an operator-managed marker (see above) by hand
+is not durable: while the owning `PodRestore` is still active the controller re-creates the
+marker on its next reconcile. To release a restore's pin, delete the `PodRestore`.

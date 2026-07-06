@@ -42,10 +42,12 @@ spec:
 ```
 
 The controller pins the source checkpoint (a `.keep` marker, see
-[retention_policy.md](retention_policy.md)) so it is not garbage-collected during
-the restore when the archive is reachable from the operator. Cross-node, it
-reports `CheckpointsPinned=False` and you must retain the archive on the target
-node yourself. Progress is reported through status conditions: `Ready` is the
+[Operator-managed markers](retention_policy.md#operator-managed-markers-podrestore))
+so it is not garbage-collected during the restore when the archive is reachable
+from the operator. The pin is released when the `PodRestore` is deleted, and an
+archive shared by several restores stays pinned until the last one is gone.
+Cross-node, it reports `CheckpointsPinned=False` and you must retain the archive
+on the target node yourself. Progress is reported through status conditions: `Ready` is the
 summary (`True` once the restored Pod runs), and its `reason` carries the detail:
 `Restoring`, `RenderFailed`, `NodeNotFound`, `InvalidSpec`, `PodConflict`,
 `PodFailed`, `PodMissing`, or `Restored`. `CheckpointsPinned` reports retention
