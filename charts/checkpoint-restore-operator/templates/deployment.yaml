@@ -1,0 +1,126 @@
+{{- if .Values.operator.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "checkpoint-restore-operator.manager.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "checkpoint-restore-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: manager
+    {{- with .Values.operator.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  replicas: {{ .Values.operator.replicas }}
+  {{- with .Values.operator.revisionHistoryLimit }}
+  revisionHistoryLimit: {{ . }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "checkpoint-restore-operator.manager.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        kubectl.kubernetes.io/default-container: manager
+        {{- with .Values.operator.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "checkpoint-restore-operator.manager.selectorLabels" . | nindent 8 }}
+        {{- with .Values.operator.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "checkpoint-restore-operator.serviceAccountName" . }}
+      terminationGracePeriodSeconds: 10
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.operator.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.operator.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.operator.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.operator.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: manager
+          image: {{ include "checkpoint-restore-operator.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - /manager
+          args:
+            {{- if .Values.operator.leaderElect }}
+            - --leader-elect
+            {{- end }}
+            - --metrics-bind-address={{ .Values.operator.metrics.bindAddress }}
+            - --metrics-secure={{ .Values.operator.metrics.secure }}
+            - --health-probe-bind-address={{ .Values.operator.healthProbe.bindAddress }}
+            - --restore-checkpoint-dir={{ .Values.operator.restore.checkpointDirectory }}
+            - --restore-allow-cross-namespace={{ .Values.operator.restore.allowCrossNamespace }}
+            {{- if .Values.operator.enableHTTP2 }}
+            - --enable-http2
+            {{- end }}
+            {{- range .Values.operator.extraArgs }}
+            - {{ . | quote }}
+            {{- end }}
+          ports:
+            - name: health
+              containerPort: {{ include "checkpoint-restore-operator.portFromBindAddress" .Values.operator.healthProbe.bindAddress }}
+              protocol: TCP
+            {{- if ne (toString .Values.operator.metrics.bindAddress) "0" }}
+            - name: metrics
+              containerPort: {{ include "checkpoint-restore-operator.portFromBindAddress" .Values.operator.metrics.bindAddress }}
+              protocol: TCP
+            {{- end }}
+          {{- with .Values.operator.envFrom }}
+          envFrom:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.operator.extraEnv }}
+          env:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.operator.healthProbe.liveness.path }}
+              port: health
+            initialDelaySeconds: {{ .Values.operator.healthProbe.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.operator.healthProbe.liveness.periodSeconds }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.operator.healthProbe.readiness.path }}
+              port: health
+            initialDelaySeconds: {{ .Values.operator.healthProbe.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.operator.healthProbe.readiness.periodSeconds }}
+          {{- with .Values.operator.containerSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.operator.resources | nindent 12 }}
+          volumeMounts:
+            - name: kubelet-checkpoints
+              mountPath: {{ .Values.operator.restore.checkpointDirectory }}
+            {{- with .Values.operator.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+      volumes:
+        - name: kubelet-checkpoints
+          hostPath:
+            path: {{ .Values.operator.restore.checkpointDirectory }}
+            type: {{ .Values.operator.restore.hostPathType }}
+        {{- with .Values.operator.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+{{- end }}

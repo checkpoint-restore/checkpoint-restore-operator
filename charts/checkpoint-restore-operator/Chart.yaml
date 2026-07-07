@@ -1,0 +1,22 @@
+apiVersion: v2
+name: checkpoint-restore-operator
+description: A Helm chart for deploying the checkpoint-restore-operator on Kubernetes.
+type: application
+# version/appVersion are release placeholders. The release workflow overrides
+# both at package time from the VERSION file at the repository root, which is
+# the release source of truth for the chart version, appVersion, and published
+# image tags. See .github/workflows/release.yml.
+version: 0.0.0
+appVersion: "0.0.0"
+kubeVersion: ">=1.30.0-0"
+keywords:
+  - checkpoint
+  - restore
+  - criu
+  - kubernetes
+home: https://github.com/checkpoint-restore/checkpoint-restore-operator
+sources:
+  - https://github.com/checkpoint-restore/checkpoint-restore-operator
+maintainers:
+  - name: checkpoint-restore maintainers
+    url: https://github.com/checkpoint-restore

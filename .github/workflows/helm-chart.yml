@@ -1,0 +1,128 @@
+name: helm-chart
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "charts/checkpoint-restore-operator/**"
+      - ".github/workflows/helm-chart.yml"
+      - ".github/workflows/release.yml"
+      - "VERSION"
+  pull_request:
+    branches: [main]
+    paths:
+      - "charts/checkpoint-restore-operator/**"
+      - ".github/workflows/helm-chart.yml"
+      - ".github/workflows/release.yml"
+      - "VERSION"
+
+permissions:
+  contents: read
+
+env:
+  HELM_KUBE_VERSION: "1.30.0"
+
+concurrency:
+  group: helm-chart-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+
+      # The chart vendors the generated CRDs; make manifests only
+      # regenerates config/crd/bases, so fail when the copies drift.
+      - name: Verify chart CRDs match generated CRDs
+        run: diff -r -u config/crd/bases charts/checkpoint-restore-operator/crds
+
+      # The chart also hand-copies the controller-gen manager ClusterRole
+      # rules, so compare them against config/rbac/role.yaml after
+      # normalizing formatting.
+      - name: Verify chart manager RBAC matches generated RBAC
+        run: |
+          helm template rbac-drift-check charts/checkpoint-restore-operator \
+            --namespace rbac-drift-check \
+            --kube-version "${HELM_KUBE_VERSION}" \
+            --set image.tag=latest \
+            --show-only templates/rbac/manager.yaml > /tmp/chart-manager-rbac.yaml
+          python3 <<'PY'
+          import json
+          import sys
+          import yaml
+
+          docs = yaml.safe_load_all(open("/tmp/chart-manager-rbac.yaml"))
+          chart = next(
+              d["rules"]
+              for d in docs
+              if d
+              and d.get("kind") == "ClusterRole"
+              and d["metadata"]["name"].endswith("manager-role")
+          )
+          generated = yaml.safe_load(open("config/rbac/role.yaml"))["rules"]
+
+          def normalize(rules):
+              return sorted(
+                  json.dumps({k: sorted(v) for k, v in r.items()}, sort_keys=True)
+                  for r in rules
+              )
+
+          if normalize(chart) != normalize(generated):
+              sys.exit("chart manager ClusterRole rules differ from config/rbac/role.yaml")
+          print("manager RBAC in sync")
+          PY
+
+      # The image tags are set explicitly below because the chart in the
+      # repository carries the 0.0.0 placeholder appVersion and fails to
+      # render without a tag by design.
+      - name: Lint chart
+        run: |
+          helm lint charts/checkpoint-restore-operator \
+            --set image.tag=latest
+
+      - name: Render default chart
+        run: |
+          helm template checkpoint-restore-operator charts/checkpoint-restore-operator \
+            --namespace checkpoint-restore-operator \
+            --kube-version "${HELM_KUBE_VERSION}" \
+            --include-crds \
+            --set image.tag=latest
+
+      - name: Render chart with CRI proxy
+        run: |
+          helm template checkpoint-restore-operator charts/checkpoint-restore-operator \
+            --namespace checkpoint-restore-operator \
+            --kube-version "${HELM_KUBE_VERSION}" \
+            --include-crds \
+            --set image.tag=latest \
+            --set criProxy.enabled=true \
+            --set criProxy.image.tag=latest
+
+      # Package the chart the same way the release workflow does, using
+      # the version from the VERSION file, so packaging failures surface
+      # on the pull request instead of during a release. On a release
+      # pull request this validates the exact package the merge will
+      # publish.
+      - name: Package Helm chart
+        run: |
+          VERSION="$(tr -d '[:space:]' < VERSION)"
+          mkdir -p .chart-package
+          helm package charts/checkpoint-restore-operator \
+            --version "${VERSION}" \
+            --app-version "${VERSION}" \
+            --destination .chart-package
+
+      - name: Render packaged chart
+        run: |
+          VERSION="$(tr -d '[:space:]' < VERSION)"
+          helm template checkpoint-restore-operator ".chart-package/checkpoint-restore-operator-${VERSION}.tgz" \
+            --namespace checkpoint-restore-operator \
+            --kube-version "${HELM_KUBE_VERSION}" \
+            --include-crds \
+            --set image.tag=latest \
+            --set criProxy.enabled=true \
+            --set criProxy.image.tag=latest

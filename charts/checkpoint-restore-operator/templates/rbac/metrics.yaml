@@ -1,0 +1,53 @@
+{{- if and .Values.operator.enabled .Values.rbac.create .Values.rbac.metricsAuth.enabled }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "checkpoint-restore-operator.metricsAuthRole.name" . }}
+  labels:
+    {{- include "checkpoint-restore-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: rbac
+rules:
+  - apiGroups:
+      - authentication.k8s.io
+    resources:
+      - tokenreviews
+    verbs:
+      - create
+  - apiGroups:
+      - authorization.k8s.io
+    resources:
+      - subjectaccessreviews
+    verbs:
+      - create
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "checkpoint-restore-operator.metricsAuthRoleBinding.name" . }}
+  labels:
+    {{- include "checkpoint-restore-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: rbac
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "checkpoint-restore-operator.metricsAuthRole.name" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "checkpoint-restore-operator.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}
+{{- if and .Values.operator.enabled .Values.rbac.create .Values.rbac.metricsReader.enabled }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "checkpoint-restore-operator.metricsReaderRole.name" . }}
+  labels:
+    {{- include "checkpoint-restore-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: rbac
+rules:
+  - nonResourceURLs:
+      - /metrics
+    verbs:
+      - get
+{{- end }}

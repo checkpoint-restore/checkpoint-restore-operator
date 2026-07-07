@@ -1,0 +1,122 @@
+{{- if and .Values.operator.enabled .Values.rbac.create .Values.rbac.resourceRoles.enabled }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "checkpoint-restore-operator.fullnameWithSuffix" (list . "forensicsnapshotchain-admin-role") }}
+  labels:
+    {{- include "checkpoint-restore-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: rbac
+rules:
+  - apiGroups:
+      - criu.org
+    resources:
+      - forensicsnapshotchains
+    verbs:
+      - '*'
+  - apiGroups:
+      - criu.org
+    resources:
+      - forensicsnapshotchains/status
+    verbs:
+      - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "checkpoint-restore-operator.fullnameWithSuffix" (list . "forensicsnapshotchain-editor-role") }}
+  labels:
+    {{- include "checkpoint-restore-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: rbac
+rules:
+  - apiGroups:
+      - criu.org
+    resources:
+      - forensicsnapshotchains
+    verbs:
+      - create
+      - delete
+      - get
+      - list
+      - patch
+      - update
+      - watch
+  - apiGroups:
+      - criu.org
+    resources:
+      - forensicsnapshotchains/status
+    verbs:
+      - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "checkpoint-restore-operator.fullnameWithSuffix" (list . "forensicsnapshotchain-viewer-role") }}
+  labels:
+    {{- include "checkpoint-restore-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: rbac
+rules:
+  - apiGroups:
+      - criu.org
+    resources:
+      - forensicsnapshotchains
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - criu.org
+    resources:
+      - forensicsnapshotchains/status
+    verbs:
+      - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "checkpoint-restore-operator.fullnameWithSuffix" (list . "podrestore-editor-role") }}
+  labels:
+    {{- include "checkpoint-restore-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: rbac
+rules:
+  - apiGroups:
+      - criu.org
+    resources:
+      - podrestores
+    verbs:
+      - create
+      - delete
+      - get
+      - list
+      - patch
+      - update
+      - watch
+  - apiGroups:
+      - criu.org
+    resources:
+      - podrestores/status
+    verbs:
+      - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "checkpoint-restore-operator.fullnameWithSuffix" (list . "podrestore-viewer-role") }}
+  labels:
+    {{- include "checkpoint-restore-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: rbac
+rules:
+  - apiGroups:
+      - criu.org
+    resources:
+      - podrestores
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - criu.org
+    resources:
+      - podrestores/status
+    verbs:
+      - get
+{{- end }}
