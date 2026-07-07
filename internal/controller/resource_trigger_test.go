@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,8 +12,10 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -97,6 +100,47 @@ var _ = Describe("cpuUsagePercent", func() {
 		cm := containerMetricsItem{Name: "app", Usage: map[string]string{"cpu": "200m"}}
 		_, ok := cpuUsagePercent(cm, corev1.ResourceList{})
 		Expect(ok).To(BeFalse())
+	})
+})
+
+var _ = Describe("ResourceTrigger.fetchPodMetrics", func() {
+	It("returns metrics-not-available for missing pod metrics objects", func() {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			status := apierrors.NewNotFound(
+				schema.GroupResource{Group: metricsAPIGroup, Resource: podMetricsResource},
+				"pod-1",
+			).Status()
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(status)
+		}))
+		defer server.Close()
+
+		trigger := &ResourceTrigger{restConfig: &rest.Config{Host: server.URL}}
+		metrics, err := trigger.fetchPodMetrics(context.Background(), server.Client(), "default", "pod-1")
+
+		Expect(metrics).To(BeNil())
+		Expect(errors.Is(err, errMetricsNotAvailable)).To(BeTrue())
+	})
+
+	It("keeps generic metrics API 404s as fetch errors", func() {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(metav1.Status{
+				Status:  metav1.StatusFailure,
+				Reason:  metav1.StatusReasonNotFound,
+				Message: "the server could not find the requested resource",
+				Code:    http.StatusNotFound,
+			})
+		}))
+		defer server.Close()
+
+		trigger := &ResourceTrigger{restConfig: &rest.Config{Host: server.URL}}
+		metrics, err := trigger.fetchPodMetrics(context.Background(), server.Client(), "default", "pod-1")
+
+		Expect(metrics).To(BeNil())
+		Expect(errors.Is(err, errMetricsNotAvailable)).To(BeFalse())
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("metrics API returned 404"))
 	})
 })
 
