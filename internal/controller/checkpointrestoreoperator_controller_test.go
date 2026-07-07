@@ -18,16 +18,20 @@ package controller
 
 import (
 	"archive/tar"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"time"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/go-logr/logr"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"k8s.io/apimachinery/pkg/api/resource"
+	ctrlLog "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 // makeCheckpointArchive creates a valid checkpoint tar archive for use in tests.
@@ -387,6 +391,153 @@ var _ = Describe("handleCheckpointsForLevel - checkpoint pinning", func() {
 
 		Expect(unreadable).To(BeAnExistingFile())
 		Expect(valid).To(BeAnExistingFile())
+		Expect(sink.errorCount).To(Equal(0))
+	})
+})
+
+var _ = Describe("handleWriteFinished", func() {
+	It("retries archive metadata reads before applying policies", func() {
+		sink := &recordingLogSink{}
+		ctx := ctrlLog.IntoContext(context.Background(), logr.New(sink))
+		expectedDetails := &checkpointDetails{
+			namespace: "default",
+			pod:       "mypod",
+			container: "mycontainer",
+		}
+		transientErr := errors.New("archive is still being written")
+		attempts := 0
+		applied := 0
+
+		handleWriteFinishedWithReader(
+			ctx,
+			fsnotify.Event{Name: "checkpoint-mypod_default-mycontainer.tar"},
+			func(log logr.Logger, path string) (*checkpointDetails, error) {
+				attempts++
+				if attempts == 1 {
+					return nil, transientErr
+				}
+				return expectedDetails, nil
+			},
+			func(log logr.Logger, details *checkpointDetails) {
+				applied++
+				Expect(details).To(Equal(expectedDetails))
+			},
+			3,
+			0,
+		)
+
+		Expect(attempts).To(Equal(2))
+		Expect(applied).To(Equal(1))
+		Expect(sink.errorCount).To(Equal(0))
+	})
+
+	It("skips unreadable archives after bounded retries without logging errors", func() {
+		sink := &recordingLogSink{}
+		ctx := ctrlLog.IntoContext(context.Background(), logr.New(sink))
+		readErr := errors.New("archive metadata is unreadable")
+		attempts := 0
+		applied := 0
+
+		handleWriteFinishedWithReader(
+			ctx,
+			fsnotify.Event{Name: "checkpoint-mypod_default-mycontainer.tar"},
+			func(log logr.Logger, path string) (*checkpointDetails, error) {
+				attempts++
+				return nil, readErr
+			},
+			func(log logr.Logger, details *checkpointDetails) {
+				applied++
+			},
+			3,
+			0,
+		)
+
+		Expect(attempts).To(Equal(3))
+		Expect(applied).To(Equal(0))
+		Expect(sink.errorCount).To(Equal(0))
+	})
+
+	It("skips policy application when the context is cancelled after reading metadata", func() {
+		sink := &recordingLogSink{}
+		ctx, cancel := context.WithCancel(ctrlLog.IntoContext(context.Background(), logr.New(sink)))
+		expectedDetails := &checkpointDetails{
+			namespace: "default",
+			pod:       "mypod",
+			container: "mycontainer",
+		}
+		attempts := 0
+		applied := 0
+
+		handleWriteFinishedWithReader(
+			ctx,
+			fsnotify.Event{Name: "checkpoint-mypod_default-mycontainer.tar"},
+			func(log logr.Logger, path string) (*checkpointDetails, error) {
+				attempts++
+				cancel()
+				return expectedDetails, nil
+			},
+			func(log logr.Logger, details *checkpointDetails) {
+				applied++
+			},
+			3,
+			0,
+		)
+
+		Expect(attempts).To(Equal(1))
+		Expect(applied).To(Equal(0))
+		Expect(sink.errorCount).To(Equal(0))
+	})
+
+	It("does not read archive metadata after context cancellation", func() {
+		sink := &recordingLogSink{}
+		ctx, cancel := context.WithCancel(ctrlLog.IntoContext(context.Background(), logr.New(sink)))
+		cancel()
+		attempts := 0
+		applied := 0
+
+		handleWriteFinishedWithReader(
+			ctx,
+			fsnotify.Event{Name: "checkpoint-mypod_default-mycontainer.tar"},
+			func(log logr.Logger, path string) (*checkpointDetails, error) {
+				attempts++
+				return &checkpointDetails{}, nil
+			},
+			func(log logr.Logger, details *checkpointDetails) {
+				applied++
+			},
+			3,
+			0,
+		)
+
+		Expect(attempts).To(Equal(0))
+		Expect(applied).To(Equal(0))
+		Expect(sink.errorCount).To(Equal(0))
+	})
+
+	It("stops waiting for retries when the context is cancelled", func() {
+		sink := &recordingLogSink{}
+		ctx, cancel := context.WithCancel(ctrlLog.IntoContext(context.Background(), logr.New(sink)))
+		readErr := errors.New("archive metadata is unreadable")
+		attempts := 0
+		applied := 0
+
+		handleWriteFinishedWithReader(
+			ctx,
+			fsnotify.Event{Name: "checkpoint-mypod_default-mycontainer.tar"},
+			func(log logr.Logger, path string) (*checkpointDetails, error) {
+				attempts++
+				cancel()
+				return nil, readErr
+			},
+			func(log logr.Logger, details *checkpointDetails) {
+				applied++
+			},
+			3,
+			time.Hour,
+		)
+
+		Expect(attempts).To(Equal(1))
+		Expect(applied).To(Equal(0))
 		Expect(sink.errorCount).To(Equal(0))
 	})
 })
