@@ -18,9 +18,11 @@ package controller
 import (
 	"os"
 
+	criuorgv1 "github.com/checkpoint-restore/checkpoint-restore-operator/api/v1"
 	"github.com/go-logr/logr"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"k8s.io/apimachinery/pkg/api/resource"
 )
 
 var _ = Describe("applyPolicies", func() {
@@ -58,5 +60,104 @@ var _ = Describe("applyPolicies", func() {
 		Expect(func() {
 			applyPolicies(logr.Discard(), details)
 		}).NotTo(Panic())
+	})
+
+	It("keeps cleanup policy snapshots independent from later policy changes", func() {
+		retainOrphanValue := false
+		containerLimit := 1
+		podLimit := 2
+		namespaceLimit := 3
+		containerPolicyLimit := 4
+		podPolicyLimit := 5
+		namespacePolicyLimit := 6
+		checkpointSize := resource.MustParse("1Gi")
+		totalContainerSize := resource.MustParse("2Gi")
+		containerPolicySize := resource.MustParse("3Gi")
+		podPolicySize := resource.MustParse("4Gi")
+		namespacePolicySize := resource.MustParse("5Gi")
+
+		spec := &criuorgv1.CheckpointRestoreOperatorSpec{
+			CheckpointDirectory: tmpDir,
+			GlobalPolicies: criuorgv1.GlobalPolicySpec{
+				RetainOrphan:                &retainOrphanValue,
+				MaxCheckpointsPerContainer:  &containerLimit,
+				MaxCheckpointsPerPod:        &podLimit,
+				MaxCheckpointsPerNamespaces: &namespaceLimit,
+				MaxCheckpointSize:           &checkpointSize,
+				MaxTotalSizePerContainer:    &totalContainerSize,
+				MaxTotalSizePerPod:          &totalContainerSize,
+				MaxTotalSizePerNamespace:    &totalContainerSize,
+			},
+			ContainerPolicies: []criuorgv1.ContainerPolicySpec{
+				{
+					Namespace:         "default",
+					Pod:               "test-pod",
+					Container:         "test-container",
+					RetainOrphan:      &retainOrphanValue,
+					MaxCheckpoints:    &containerPolicyLimit,
+					MaxCheckpointSize: &containerPolicySize,
+					MaxTotalSize:      &containerPolicySize,
+				},
+			},
+			PodPolicies: []criuorgv1.PodPolicySpec{
+				{
+					Namespace:         "default",
+					Pod:               "test-pod",
+					RetainOrphan:      &retainOrphanValue,
+					MaxCheckpoints:    &podPolicyLimit,
+					MaxCheckpointSize: &podPolicySize,
+					MaxTotalSize:      &podPolicySize,
+				},
+			},
+			NamespacePolicies: []criuorgv1.NamespacePolicySpec{
+				{
+					Namespace:         "default",
+					RetainOrphan:      &retainOrphanValue,
+					MaxCheckpoints:    &namespacePolicyLimit,
+					MaxCheckpointSize: &namespacePolicySize,
+					MaxTotalSize:      &namespacePolicySize,
+				},
+			},
+		}
+
+		policies, restartGarbageCollector := (&CheckpointRestoreOperatorReconciler{}).applyPolicySpec(logr.Discard(), spec)
+		Expect(restartGarbageCollector).To(BeFalse())
+
+		retainOrphanValue = true
+		containerLimit = 10
+		podLimit = 20
+		namespaceLimit = 30
+		containerPolicyLimit = 40
+		podPolicyLimit = 50
+		namespacePolicyLimit = 60
+		checkpointSize = resource.MustParse("10Gi")
+		totalContainerSize = resource.MustParse("20Gi")
+		containerPolicySize = resource.MustParse("30Gi")
+		podPolicySize = resource.MustParse("40Gi")
+		namespacePolicySize = resource.MustParse("50Gi")
+		resetAllPoliciesToDefault(logr.Discard())
+
+		Expect(policies.checkpointDirectory).To(Equal(tmpDir))
+		Expect(policies.retainOrphan).To(BeFalse())
+		Expect(policies.maxCheckpointsPerContainer).To(Equal(1))
+		Expect(policies.maxCheckpointsPerPod).To(Equal(2))
+		Expect(policies.maxCheckpointsPerNamespace).To(Equal(3))
+		Expect(policies.maxCheckpointSize.Cmp(resource.MustParse("1Gi"))).To(Equal(0))
+		Expect(policies.maxTotalSizePerContainer.Cmp(resource.MustParse("2Gi"))).To(Equal(0))
+
+		Expect(policies.containerPolicies).To(HaveLen(1))
+		Expect(*policies.containerPolicies[0].RetainOrphan).To(BeFalse())
+		Expect(*policies.containerPolicies[0].MaxCheckpoints).To(Equal(4))
+		Expect(policies.containerPolicies[0].MaxCheckpointSize.Cmp(resource.MustParse("3Gi"))).To(Equal(0))
+
+		Expect(policies.podPolicies).To(HaveLen(1))
+		Expect(*policies.podPolicies[0].RetainOrphan).To(BeFalse())
+		Expect(*policies.podPolicies[0].MaxCheckpoints).To(Equal(5))
+		Expect(policies.podPolicies[0].MaxCheckpointSize.Cmp(resource.MustParse("4Gi"))).To(Equal(0))
+
+		Expect(policies.namespacePolicies).To(HaveLen(1))
+		Expect(*policies.namespacePolicies[0].RetainOrphan).To(BeFalse())
+		Expect(*policies.namespacePolicies[0].MaxCheckpoints).To(Equal(6))
+		Expect(policies.namespacePolicies[0].MaxCheckpointSize.Cmp(resource.MustParse("5Gi"))).To(Equal(0))
 	})
 })
