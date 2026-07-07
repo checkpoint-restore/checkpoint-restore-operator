@@ -48,6 +48,7 @@ The operator will repeatedly create checkpoints of the selected container every 
 
 Once the resource reaches `Completed`, the configured `postSnapshotAction` runs exactly once. But note, the evidence is preserved.
 
+When an integrity spec is set, the operator forms a forensic chain of snapshots in which each snapshot carries its own hash and a link to the previous snapshot's hash. Only `sha256` is currently supported.
 
 ## Spec Reference
 
@@ -83,7 +84,15 @@ The same guarantee covers a target that matches pods but cannot be checkpointed.
 
 ### Integrity
 
-- `hashAlgorithm` (string): reserved for future integrity verification support. Yet to be added.
+- `hashAlgorithm` (string): algorithm used to hash each checkpoint and link it into the forensic snapshot chain. Only `sha256` is supported; leave empty to disable hashing.
+
+- Hashes are computed via a short-lived helper pod on the target node with read-only access to `/var/lib/kubelet/checkpoints`.
+
+- Each entry in `snapshotChainRecords` includes `sha256Hash`, `checkpointPath`, and `previousSHA256Hash` (a link to the prior snapshot's hash).
+
+- The `IntegrityVerified` condition reports hash success or failure.
+
+- Hash failures do not fail the chain: capture continues and only the condition reflects the problem.
 
 
 ## Snapshot Lifecycle
@@ -173,6 +182,10 @@ fixed number of consecutive failed rounds it gives up rather than retrying
 forever. When `maxDuration` is set, that time backstop governs instead and the
 capture run keeps retrying failures until it elapses, so set `maxDuration` if you want
 retries bounded by time rather than by failure count.
+
+An unsupported `integrity.hashAlgorithm` is also terminal: the resource moves to
+`Failed` immediately, before any checkpoint is attempted. `postSnapshotAction`
+does not run on a `Failed` resource.
 
 ## Observing
 

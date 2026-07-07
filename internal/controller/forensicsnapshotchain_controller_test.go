@@ -633,6 +633,41 @@ var _ = Describe("ForensicSnapshotChainReconciler", func() {
 		Expect(r.executePostSnapshotAction(context.Background(), chain, []corev1.Pod{*absent}, 1)).To(Succeed())
 	})
 
+	// --- Integrity verification ---
+
+	It("fails the chain when hashAlgorithm is unsupported", func() {
+		chain := runningChain()
+		chain.Spec.Integrity = criuorgv1.IntegritySpec{HashAlgorithm: "md5"}
+		mock := &mockCheckpointer{}
+		r := makeRunningReconciler(chain, mock)
+
+		_, err := r.Reconcile(context.Background(), request)
+		Expect(err).To(HaveOccurred())
+
+		updated := &criuorgv1.ForensicSnapshotChain{}
+		Expect(r.Get(context.Background(), request.NamespacedName, updated)).To(Succeed())
+		Expect(updated.Status.Phase).To(Equal(criuorgv1.PhaseFailed))
+		Expect(updated.Status.ErrorMessage).To(ContainSubstring("md5"))
+		Expect(mock.calls).To(BeEmpty())
+	})
+
+	It("records a snapshot without a hash when hashAlgorithm is empty", func() {
+		chain := runningChain()
+		mock := &mockCheckpointer{}
+		pod := runningPod("pod-1", map[string]string{"app": "test"}, "c1")
+		r := makeRunningReconciler(chain, mock, pod)
+
+		_, err := r.Reconcile(context.Background(), request)
+		Expect(err).ToNot(HaveOccurred())
+
+		updated := &criuorgv1.ForensicSnapshotChain{}
+		Expect(r.Get(context.Background(), request.NamespacedName, updated)).To(Succeed())
+		Expect(updated.Status.Phase).ToNot(Equal(criuorgv1.PhaseFailed))
+		Expect(updated.Status.SnapshotChainRecords).To(HaveLen(1))
+		Expect(updated.Status.SnapshotChainRecords[0].SHA256Hash).To(BeEmpty())
+		Expect(meta.FindStatusCondition(updated.Status.Conditions, "IntegrityVerified")).To(BeNil())
+	})
+
 })
 
 func runningPod(name string, labels map[string]string, containers ...string) *corev1.Pod {
