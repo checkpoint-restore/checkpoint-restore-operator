@@ -129,6 +129,80 @@ func specDumpArchive(t *testing.T, annotations string) string {
 	})
 }
 
+func TestReadPodContainerRef(t *testing.T) {
+	tests := []struct {
+		name        string
+		annotations string
+		want        PodContainerRef
+		wantErr     string
+	}{
+		{
+			name:        "cri-o labels annotation",
+			annotations: `{"io.kubernetes.cri-o.Labels":"{\"io.kubernetes.pod.namespace\":\"team-a\",\"io.kubernetes.pod.name\":\"web\",\"io.kubernetes.container.name\":\"app\"}"}`,
+			want:        PodContainerRef{Namespace: "team-a", Pod: "web", Container: "app"},
+		},
+		{
+			name:        "containerd CRI annotations",
+			annotations: `{"io.kubernetes.cri.sandbox-namespace":"team-b","io.kubernetes.cri.sandbox-name":"worker","io.kubernetes.cri.container-name":"main"}`,
+			want:        PodContainerRef{Namespace: "team-b", Pod: "worker", Container: "main"},
+		},
+		{
+			name:        "checkpointctl standard annotations",
+			annotations: `{"org.criu.checkpoint.pod.namespace":"team-c","org.criu.checkpoint.pod.name":"redis","org.criu.checkpoint.container.name":"server"}`,
+			want:        PodContainerRef{Namespace: "team-c", Pod: "redis", Container: "server"},
+		},
+		{
+			name:        "empty cri-o labels fall back to containerd annotations",
+			annotations: `{"io.kubernetes.cri-o.Labels":"","io.kubernetes.cri.sandbox-namespace":"team-d","io.kubernetes.cri.sandbox-name":"job","io.kubernetes.cri.container-name":"task"}`,
+			want:        PodContainerRef{Namespace: "team-d", Pod: "job", Container: "task"},
+		},
+		{
+			name:        "missing identity fails closed",
+			annotations: `{"unrelated":"x"}`,
+			wantErr:     "no supported pod/container identity annotations found",
+		},
+		{
+			name:        "malformed cri-o labels fail closed",
+			annotations: `{"io.kubernetes.cri-o.Labels":"not-json"}`,
+			wantErr:     "parsing \"io.kubernetes.cri-o.Labels\"",
+		},
+		{
+			name:        "partial containerd identity fails closed",
+			annotations: `{"io.kubernetes.cri.sandbox-namespace":"team-e","io.kubernetes.cri.sandbox-name":"api"}`,
+			wantErr:     "identity is incomplete",
+		},
+		{
+			name:        "conflicting identities fail closed",
+			annotations: `{"io.kubernetes.cri-o.Labels":"{\"io.kubernetes.pod.namespace\":\"team-f\",\"io.kubernetes.pod.name\":\"web\",\"io.kubernetes.container.name\":\"app\"}","org.criu.checkpoint.pod.namespace":"team-f","org.criu.checkpoint.pod.name":"web","org.criu.checkpoint.container.name":"sidecar"}`,
+			wantErr:     "conflicting pod/container identity",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := ReadPodContainerRef(specDumpArchive(t, tc.annotations))
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("expected error containing %q, got %v", tc.wantErr, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("ref = %#v, want %#v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestReadPodContainerRefMissingArchive(t *testing.T) {
+	if _, err := ReadPodContainerRef(filepath.Join(t.TempDir(), "missing.tar")); err == nil {
+		t.Fatal("expected error for a missing archive")
+	}
+}
+
 func TestReadPodNamespace(t *testing.T) {
 	tests := []struct {
 		name        string
