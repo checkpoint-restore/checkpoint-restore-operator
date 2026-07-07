@@ -105,6 +105,55 @@ func makeCheckpointArchive(dir, pod, ns, container string, ts time.Time, sizeByt
 	return archivePath
 }
 
+func makeCheckpointArchiveWithoutIdentity(dir, pod, ns, container string, ts time.Time) string {
+	name := fmt.Sprintf("checkpoint-%s_%s-%s-%s.tar",
+		pod, ns, container, ts.UTC().Format("2006-01-02T15:04:05Z"))
+	archivePath := filepath.Join(dir, name)
+	specDump := []byte(`{"annotations":{"unrelated":"x"}}`)
+
+	f, err := os.Create(archivePath)
+	Expect(err).NotTo(HaveOccurred())
+
+	tw := tar.NewWriter(f)
+	Expect(tw.WriteHeader(&tar.Header{
+		Name:    "spec.dump",
+		Mode:    0o644,
+		Size:    int64(len(specDump)),
+		ModTime: ts,
+	})).To(Succeed())
+	_, err = tw.Write(specDump)
+	Expect(err).NotTo(HaveOccurred())
+
+	Expect(tw.Close()).To(Succeed())
+	Expect(f.Close()).To(Succeed())
+	Expect(os.Chtimes(archivePath, ts, ts)).To(Succeed())
+	return archivePath
+}
+
+type recordingLogSink struct {
+	errorCount int
+}
+
+func (s *recordingLogSink) Init(logr.RuntimeInfo) {}
+
+func (s *recordingLogSink) Enabled(int) bool {
+	return true
+}
+
+func (s *recordingLogSink) Info(int, string, ...interface{}) {}
+
+func (s *recordingLogSink) Error(error, string, ...interface{}) {
+	s.errorCount++
+}
+
+func (s *recordingLogSink) WithValues(...interface{}) logr.LogSink {
+	return s
+}
+
+func (s *recordingLogSink) WithName(string) logr.LogSink {
+	return s
+}
+
 // roundTo512 rounds n up to the nearest multiple of 512 (tar block size).
 func roundTo512(n int64) int64 {
 	return ((n + 511) / 512) * 512
@@ -319,5 +368,25 @@ var _ = Describe("handleCheckpointsForLevel - checkpoint pinning", func() {
 
 		Expect(pinnedPath).To(BeAnExistingFile())
 		Expect(deletablePath).NotTo(BeAnExistingFile())
+	})
+
+	It("skips archives with unreadable metadata during retention scans without logging errors", func() {
+		base := ts(1)
+		unreadable := makeCheckpointArchiveWithoutIdentity(dir, "mypod", "default", "mycontainer", base)
+		valid := makeCheckpointArchive(dir, "mypod", "default", "mycontainer", base.Add(time.Second), 1024, false)
+
+		policy := Policy{
+			RetainOrphan:      true,
+			MaxCheckpoints:    1,
+			MaxCheckpointSize: resource.MustParse("100Gi"),
+			MaxTotalSize:      resource.MustParse("100Gi"),
+		}
+		sink := &recordingLogSink{}
+
+		handleCheckpointsForLevel(logr.New(sink), details, "container", policy)
+
+		Expect(unreadable).To(BeAnExistingFile())
+		Expect(valid).To(BeAnExistingFile())
+		Expect(sink.errorCount).To(Equal(0))
 	})
 })

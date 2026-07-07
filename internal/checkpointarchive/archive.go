@@ -54,6 +54,27 @@ const criOLabelsAnnotation = "io.kubernetes.cri-o.Labels"
 // which containerd records the namespace of the pod sandbox.
 const containerdSandboxNamespaceAnnotation = "io.kubernetes.cri.sandbox-namespace"
 
+// containerdSandboxNameAnnotation is the spec.dump annotation under which
+// containerd records the name of the pod sandbox.
+const containerdSandboxNameAnnotation = "io.kubernetes.cri.sandbox-name"
+
+// containerdContainerNameAnnotation is the spec.dump annotation under which
+// containerd records the name of the container within the pod.
+const containerdContainerNameAnnotation = "io.kubernetes.cri.container-name"
+
+// PodContainerRef identifies the Kubernetes pod container captured in a
+// checkpoint archive.
+type PodContainerRef struct {
+	Namespace string
+	Pod       string
+	Container string
+}
+
+type podContainerRefCandidate struct {
+	source string
+	ref    PodContainerRef
+}
+
 // UntarFiles extracts the named entries from the archive src into dest.
 //
 // Entry names are compared exactly after lexical cleaning ("./spec.dump"
@@ -162,6 +183,95 @@ func extractSpecDump(checkpointPath string) (map[string]string, error) {
 		return nil, err
 	}
 	return specDump.Annotations, nil
+}
+
+// ReadPodContainerRef returns the Kubernetes namespace, pod, and container
+// recorded in the archive's spec.dump. It understands CRI-O's kubelet labels,
+// containerd's CRI annotations, and checkpointctl-standard annotations. It
+// fails closed when identity is incomplete, malformed, missing, or conflicting.
+func ReadPodContainerRef(checkpointPath string) (PodContainerRef, error) {
+	annotations, err := extractSpecDump(checkpointPath)
+	if err != nil {
+		return PodContainerRef{}, fmt.Errorf("reading spec.dump from %s: %w", checkpointPath, err)
+	}
+	ref, err := podContainerRefFromAnnotations(annotations)
+	if err != nil {
+		return PodContainerRef{}, fmt.Errorf("reading pod/container identity from spec.dump of %s: %w", checkpointPath, err)
+	}
+	return ref, nil
+}
+
+func podContainerRefFromAnnotations(annotations map[string]string) (PodContainerRef, error) {
+	candidates := make([]podContainerRefCandidate, 0, 3)
+
+	if raw := annotations[criOLabelsAnnotation]; raw != "" {
+		labels := map[string]string{}
+		if err := json.Unmarshal([]byte(raw), &labels); err != nil {
+			return PodContainerRef{}, fmt.Errorf("parsing %q: %w", criOLabelsAnnotation, err)
+		}
+		candidates = append(candidates, podContainerRefCandidate{
+			source: criOLabelsAnnotation,
+			ref: PodContainerRef{
+				Namespace: labels[kubelettypes.KubernetesPodNamespaceLabel],
+				Pod:       labels[kubelettypes.KubernetesPodNameLabel],
+				Container: labels[kubelettypes.KubernetesContainerNameLabel],
+			},
+		})
+	}
+
+	appendCandidateIfPresent := func(source string, ref PodContainerRef) {
+		if ref.Namespace == "" && ref.Pod == "" && ref.Container == "" {
+			return
+		}
+		candidates = append(candidates, podContainerRefCandidate{source: source, ref: ref})
+	}
+
+	appendCandidateIfPresent("containerd CRI annotations", PodContainerRef{
+		Namespace: annotations[containerdSandboxNamespaceAnnotation],
+		Pod:       annotations[containerdSandboxNameAnnotation],
+		Container: annotations[containerdContainerNameAnnotation],
+	})
+	appendCandidateIfPresent("checkpointctl annotations", PodContainerRef{
+		Namespace: annotations[metadata.CheckpointAnnotationNamespace],
+		Pod:       annotations[metadata.CheckpointAnnotationPod],
+		Container: annotations[metadata.CheckpointAnnotationName],
+	})
+
+	var selected *podContainerRefCandidate
+	for i := range candidates {
+		candidate := &candidates[i]
+		if !candidate.ref.complete() {
+			return PodContainerRef{}, fmt.Errorf("%s identity is incomplete: namespace=%q pod=%q container=%q",
+				candidate.source,
+				candidate.ref.Namespace,
+				candidate.ref.Pod,
+				candidate.ref.Container,
+			)
+		}
+		if selected == nil {
+			selected = candidate
+			continue
+		}
+		if !selected.ref.equal(candidate.ref) {
+			return PodContainerRef{}, fmt.Errorf("conflicting pod/container identity between %s and %s",
+				selected.source,
+				candidate.source,
+			)
+		}
+	}
+
+	if selected == nil {
+		return PodContainerRef{}, errors.New("no supported pod/container identity annotations found")
+	}
+	return selected.ref, nil
+}
+
+func (r PodContainerRef) complete() bool {
+	return r.Namespace != "" && r.Pod != "" && r.Container != ""
+}
+
+func (r PodContainerRef) equal(other PodContainerRef) bool {
+	return r.Namespace == other.Namespace && r.Pod == other.Pod && r.Container == other.Container
 }
 
 // ReadPodNamespace returns the namespace of the pod the checkpoint was taken

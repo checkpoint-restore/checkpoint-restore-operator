@@ -18,7 +18,6 @@ package controller
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"math"
 	"os"
@@ -31,7 +30,6 @@ import (
 	criuorgv1 "github.com/checkpoint-restore/checkpoint-restore-operator/api/v1"
 	"github.com/checkpoint-restore/checkpoint-restore-operator/internal/checkpointarchive"
 
-	metadata "github.com/checkpoint-restore/checkpointctl/lib"
 	"github.com/go-logr/logr"
 	v1 "k8s.io/api/core/v1"
 	k8err "k8s.io/apimachinery/pkg/api/errors"
@@ -42,7 +40,6 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
-	kubelettypes "k8s.io/kubelet/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -241,37 +238,15 @@ type checkpointDetails struct {
 	container string
 }
 
-func getCheckpointArchiveInformation(log logr.Logger, checkpointPath string) (*checkpointDetails, error) {
-	tempDir, err := os.MkdirTemp("", "get-spec-dump")
+func getCheckpointArchiveInformation(_ logr.Logger, checkpointPath string) (*checkpointDetails, error) {
+	ref, err := checkpointarchive.ReadPodContainerRef(checkpointPath)
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = os.RemoveAll(tempDir) }()
-
-	filesToExtract := []string{"spec.dump"}
-	if err := UntarFiles(checkpointPath, tempDir, filesToExtract); err != nil {
-		log.Info("Error extracting files from archive: ", "checkpointPath", checkpointPath, "Error", err)
-		return nil, err
-	}
-
-	dumpSpec, _, err := metadata.ReadContainerCheckpointSpecDump(tempDir)
-	if err != nil {
-		return nil, err
-	}
-	labels := make(map[string]string)
-
-	rawLabels := dumpSpec.Annotations["io.kubernetes.cri-o.Labels"]
-	if rawLabels == "" {
-		return nil, fmt.Errorf("failed to read %q: annotation is empty, archive may still be written", "io.kubernetes.cri-o.Labels")
-	}
-	if err := json.Unmarshal([]byte(rawLabels), &labels); err != nil {
-		return nil, fmt.Errorf("failed to read %q: %w", "io.kubernetes.cri-o.Labels", err)
-	}
-
 	details := &checkpointDetails{
-		namespace: labels[kubelettypes.KubernetesPodNamespaceLabel],
-		pod:       labels[kubelettypes.KubernetesPodNameLabel],
-		container: labels[kubelettypes.KubernetesContainerNameLabel],
+		namespace: ref.Namespace,
+		pod:       ref.Pod,
+		container: ref.Container,
 	}
 
 	return details, nil
@@ -409,7 +384,7 @@ func categorizeCheckpoints(log logr.Logger, checkpointFiles []string) map[string
 	for _, checkpointFile := range checkpointFiles {
 		details, err := getCheckpointArchiveInformation(log, checkpointFile)
 		if err != nil {
-			log.Error(err, "Failed to get checkpoint archive information", "checkpointFile", checkpointFile)
+			log.V(1).Info("Skipping checkpoint archive with unreadable metadata", "checkpointFile", checkpointFile, "error", err)
 			continue
 		}
 
@@ -486,7 +461,7 @@ func handleCheckpointsForLevel(log logr.Logger, details *checkpointDetails, leve
 	for _, archive := range checkpointArchives {
 		archiveDetails, err := getCheckpointArchiveInformation(log, archive)
 		if err != nil {
-			log.Error(err, "failed to get archive details", "archive", archive)
+			log.V(1).Info("Skipping checkpoint archive with unreadable metadata", "archive", archive, "error", err)
 			continue
 		}
 
