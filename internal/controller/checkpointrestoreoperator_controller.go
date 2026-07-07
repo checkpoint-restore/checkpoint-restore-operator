@@ -56,6 +56,11 @@ const (
 	BySize
 )
 
+const (
+	checkpointArchiveReadAttempts   = 3
+	checkpointArchiveReadRetryDelay = 2 * time.Second
+)
+
 var (
 	GarbageCollector           garbageCollector
 	policyMutex                sync.RWMutex
@@ -379,6 +384,9 @@ type checkpointDetails struct {
 	container string
 }
 
+type checkpointArchiveReader func(logr.Logger, string) (*checkpointDetails, error)
+type checkpointPolicyApplier func(logr.Logger, *checkpointDetails)
+
 func getCheckpointArchiveInformation(_ logr.Logger, checkpointPath string) (*checkpointDetails, error) {
 	ref, err := checkpointarchive.ReadPodContainerRef(checkpointPath)
 	if err != nil {
@@ -542,14 +550,72 @@ func categorizeCheckpoints(log logr.Logger, checkpointFiles []string) map[string
 }
 
 func handleWriteFinished(ctx context.Context, event fsnotify.Event) {
+	handleWriteFinishedWithReader(ctx, event, getCheckpointArchiveInformation, applyPolicies, checkpointArchiveReadAttempts, checkpointArchiveReadRetryDelay)
+}
+
+func handleWriteFinishedWithReader(ctx context.Context, event fsnotify.Event, read checkpointArchiveReader, apply checkpointPolicyApplier, maxAttempts int, retryDelay time.Duration) {
 	log := log.FromContext(ctx)
-	details, err := getCheckpointArchiveInformation(log, event.Name)
+	details, err := readCheckpointArchiveInformationWithRetry(ctx, log, event.Name, read, maxAttempts, retryDelay)
 	if err != nil {
-		log.Error(err, "runGarbageCollector():getCheckpointArchiveInformation()")
+		if ctx.Err() != nil {
+			log.V(1).Info("Skipping checkpoint archive because garbage collector stopped", "path", event.Name, "error", err)
+			return
+		}
+		log.V(1).Info("Skipping checkpoint archive with unreadable metadata after retries", "path", event.Name, "error", err)
+		return
+	}
+	if err := ctx.Err(); err != nil {
+		log.V(1).Info("Skipping checkpoint archive because garbage collector stopped", "path", event.Name, "error", err)
 		return
 	}
 
-	applyPolicies(log, details)
+	apply(log, details)
+}
+
+// readCheckpointArchiveInformationWithRetry handles the gap between fsnotify
+// write events and a complete checkpoint archive. Some archive producers
+// update the watched path before metadata can be parsed from the tar stream,
+// so the first read after the debounce window can fail transiently.
+func readCheckpointArchiveInformationWithRetry(ctx context.Context, log logr.Logger, checkpointPath string, read checkpointArchiveReader, maxAttempts int, retryDelay time.Duration) (*checkpointDetails, error) {
+	if maxAttempts < 1 {
+		maxAttempts = 1
+	}
+
+	var err error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Errorf("checkpoint archive metadata read canceled: %w", err)
+		}
+
+		var details *checkpointDetails
+		details, err = read(log, checkpointPath)
+		if err == nil {
+			return details, nil
+		}
+		if attempt == maxAttempts {
+			break
+		}
+
+		log.V(1).Info("Checkpoint archive metadata is not ready, retrying", "path", checkpointPath, "attempt", attempt, "error", err)
+		if retryDelay <= 0 {
+			continue
+		}
+
+		timer := time.NewTimer(retryDelay)
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			return nil, fmt.Errorf("waiting to retry checkpoint archive metadata read: %w", ctx.Err())
+		}
+	}
+
+	return nil, err
 }
 
 func handleCheckpointsForLevel(log logr.Logger, details *checkpointDetails, level string, policy Policy) {
@@ -1019,7 +1085,8 @@ func (gc *garbageCollector) runGarbageCollector() {
 		timers = make(map[string]*time.Timer)
 	)
 
-	ctx := context.TODO()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	log := log.FromContext(ctx)
 	// Only start one version of the garbage collection threads.
 	gc.Lock()
@@ -1044,6 +1111,19 @@ func (gc *garbageCollector) runGarbageCollector() {
 	go gc.PodWatcher(log, c)
 
 	go func() {
+		stop := func() {
+			cancel()
+
+			mu.Lock()
+			for path, timer := range timers {
+				timer.Stop()
+				delete(timers, path)
+			}
+			mu.Unlock()
+
+			close(c)
+		}
+
 		// close(c), not a single send: c is read by the pod informer
 		// (controller.Run), PodWatcher's final wait, and runGarbageCollector's
 		// own <-c. A single send wakes only one of them, leaving the others
@@ -1052,32 +1132,35 @@ func (gc *garbageCollector) runGarbageCollector() {
 		for {
 			select {
 			case <-quit:
-				close(c)
+				stop()
 				return
 			case event, ok := <-watcher.Events:
 				if !ok {
-					close(c)
+					stop()
 					return
 				}
 				if !event.Has(fsnotify.Create) && !event.Has(fsnotify.Write) {
 					continue
 				}
-				if strings.HasSuffix(event.Name, ".keep") || strings.HasSuffix(event.Name, ".keep.tmp") {
-					log.V(1).Info("skipping .keep marker file in GC event handler", "path", event.Name)
+				checkpointPath := event.Name
+				if strings.HasSuffix(checkpointPath, ".keep") || strings.HasSuffix(checkpointPath, ".keep.tmp") {
+					log.V(1).Info("skipping .keep marker file in GC event handler", "path", checkpointPath)
 					continue
 				}
 				// Get timer.
 				mu.Lock()
-				t, ok := timers[event.Name]
+				t, ok := timers[checkpointPath]
 				mu.Unlock()
 
 				// No timer yet, so create one.
 				if !ok {
-					t = time.AfterFunc(math.MaxInt64, func() { handleWriteFinished(ctx, event) })
+					t = time.AfterFunc(math.MaxInt64, func() {
+						handleWriteFinished(ctx, fsnotify.Event{Name: checkpointPath})
+					})
 					t.Stop()
 
 					mu.Lock()
-					timers[event.Name] = t
+					timers[checkpointPath] = t
 					mu.Unlock()
 				}
 
@@ -1086,7 +1169,7 @@ func (gc *garbageCollector) runGarbageCollector() {
 
 			case err, ok := <-watcher.Errors:
 				if !ok {
-					close(c)
+					stop()
 					return
 				}
 				log.Error(err, "runGarbageCollector()")
