@@ -1,4 +1,4 @@
-name: Build and Deploy
+name: tests
 
 on:
   push:
@@ -6,8 +6,14 @@ on:
   pull_request:
     branches: [main]
 
+# Cancel any preceding run on the pull request.
+concurrency:
+  group: tests-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
   unit-tests:
+    name: Unit tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -26,6 +32,7 @@ jobs:
         run: go test -race -coverprofile=cover.out ./...
 
   build-cri-proxy:
+    name: Build CRI proxy
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -45,7 +52,7 @@ jobs:
         run: make docker-build-cri-proxy CRI_PROXY_IMG=cri-proxy:ci
 
   build-and-deploy:
-    name: build-and-deploy (${{ matrix.name }})
+    name: e2e (${{ matrix.name }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
