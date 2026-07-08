@@ -5,19 +5,19 @@ wait_for_deployment() {
 	timeout=60 # 5 minutes (60 * 5 sec)
 	i=1
 	echo "Checking if the ${deployment_name} deployment is ready"
-	until kubectl -n checkpoint-restore-operator-system get deployment "${deployment_name}" -o jsonpath='{.status.conditions[?(@.status=="True")].type}' | grep "Available" 2>/dev/null; do
+	until kubectl -n checkpoint-restore-operator get deployment "${deployment_name}" -o jsonpath='{.status.conditions[?(@.status=="True")].type}' | grep "Available" 2>/dev/null; do
 		((i++))
 		if [[ ${i} -gt ${timeout} ]]; then
 			echo "The ${deployment_name} deployment has not become ready before the timeout period"
 			echo "Fetching deployment status and describing pods for debugging:"
-			kubectl -n checkpoint-restore-operator-system get deployment "${deployment_name}"
-			kubectl -n checkpoint-restore-operator-system describe deployment "${deployment_name}"
-			kubectl -n checkpoint-restore-operator-system get pods
-			kubectl -n checkpoint-restore-operator-system describe pods
+			kubectl -n checkpoint-restore-operator get deployment "${deployment_name}"
+			kubectl -n checkpoint-restore-operator describe deployment "${deployment_name}"
+			kubectl -n checkpoint-restore-operator get pods
+			kubectl -n checkpoint-restore-operator describe pods
 			echo "Fetching detailed logs from the pods for further debugging:"
-			for pod in $(kubectl -n checkpoint-restore-operator-system get pods -o jsonpath='{.items[*].metadata.name}'); do
+			for pod in $(kubectl -n checkpoint-restore-operator get pods -o jsonpath='{.items[*].metadata.name}'); do
 				echo "Logs for pod ${pod}:"
-				kubectl -n checkpoint-restore-operator-system logs "${pod}"
+				kubectl -n checkpoint-restore-operator logs "${pod}"
 			done
 			exit 1
 		fi

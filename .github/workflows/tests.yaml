@@ -134,7 +134,7 @@ jobs:
         run: ./test/wait_for_deployment.sh checkpoint-restore-operator-controller-manager
 
       - name: Check resources
-        run: kubectl get all -n checkpoint-restore-operator-system
+        run: kubectl get all -n checkpoint-restore-operator
 
       - name: Test Garbage Collection
         run: sudo -E bats -f "test_garbage_collection" ./test/run_tests.bats

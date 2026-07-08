@@ -11,7 +11,7 @@
 # built from config/default/kustomization.yaml (namespace + namePrefix) and the
 # ServiceAccount in config/rbac/service_account.yaml (name: controller-manager).
 # With the defaults that is:
-#   namespace  = checkpoint-restore-operator-system
+#   namespace  = checkpoint-restore-operator
 #   namePrefix = checkpoint-restore-operator-
 #   SA name    = controller-manager
 # If you change the namespace, the namePrefix, or the SA name, update the username
@@ -36,7 +36,7 @@ spec:
           - pods
   validations:
     - expression: >-
-        request.userInfo.username == 'system:serviceaccount:checkpoint-restore-operator-system:checkpoint-restore-operator-controller-manager' ||
+        request.userInfo.username == 'system:serviceaccount:checkpoint-restore-operator:checkpoint-restore-operator-controller-manager' ||
         !has(object.metadata.annotations) ||
         object.metadata.annotations.all(k,
           !k.startsWith('restore.criu.org/checkpoint-path.') ||

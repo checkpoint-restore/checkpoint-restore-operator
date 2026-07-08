@@ -39,7 +39,7 @@ function operator_logs() {
   if [ -n "$OPERATOR_LOG_CMD" ]; then
     $OPERATOR_LOG_CMD
   else
-    kubectl logs -n checkpoint-restore-operator-system deployment/checkpoint-restore-operator-controller-manager --tail=-1
+    kubectl logs -n checkpoint-restore-operator deployment/checkpoint-restore-operator-controller-manager --tail=-1
   fi
 }
 
