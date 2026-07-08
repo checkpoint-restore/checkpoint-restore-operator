@@ -25,6 +25,7 @@ jobs:
   # push. Pull requests from forks and from Dependabot run without the
   # repository secrets and skip this check.
   verify-registry-access:
+    name: Verify registry push access
     if: >-
       github.repository == 'checkpoint-restore/checkpoint-restore-operator' &&
       (github.event_name != 'pull_request' ||
@@ -59,6 +60,7 @@ jobs:
   # (fork and Dependabot pull requests, which build without pushing),
   # but never when it failed.
   build:
+    name: Build ${{ matrix.name }} image
     needs: verify-registry-access
     if: >-
       !cancelled() &&

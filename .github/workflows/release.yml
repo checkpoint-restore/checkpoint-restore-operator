@@ -18,6 +18,7 @@ concurrency:
 
 jobs:
   validate:
+    name: Extract release version
     if: ${{ github.repository == 'checkpoint-restore/checkpoint-restore-operator' }}
     runs-on: ubuntu-latest
     outputs:
@@ -70,6 +71,7 @@ jobs:
   # credentials are missing push access to any target repository;
   # nothing is pushed by this check.
   verify-registry-access:
+    name: Verify registry push access
     if: ${{ needs.validate.outputs.release == 'true' }}
     needs: validate
     runs-on: ubuntu-latest
@@ -98,6 +100,7 @@ jobs:
             criu/charts/checkpoint-restore-operator
 
   images:
+    name: Push ${{ matrix.name }} image
     needs: [validate, verify-registry-access]
     runs-on: ubuntu-latest
     strategy:
@@ -145,6 +148,7 @@ jobs:
             ${{ matrix.quay_repository }}:${{ needs.validate.outputs.image_tag }}
 
   helm:
+    name: Publish Helm chart
     needs: [validate, images]
     runs-on: ubuntu-latest
     steps:
@@ -220,6 +224,7 @@ jobs:
           helm push ".chart-package/checkpoint-restore-operator-${VERSION}.tgz" oci://quay.io/criu/charts
 
   github-release:
+    name: Create GitHub release
     needs: [validate, images, helm]
     runs-on: ubuntu-latest
     permissions:
