@@ -18,18 +18,18 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
-  # Pull requests build images without pushing, so invalid registry
-  # credentials or missing push permissions would otherwise only
-  # surface after merge or during a release. Request push-scoped
-  # registry tokens and check the granted access instead; nothing is
-  # pushed. Pull requests from forks and from Dependabot run without
-  # the repository secrets and skip this check.
+  # Request push-scoped registry tokens and check that the granted
+  # access includes push; nothing is pushed by this check. On push and
+  # schedule events this gates the image push below, so broken
+  # credentials fail fast instead of halfway through a multi-registry
+  # push. Pull requests from forks and from Dependabot run without the
+  # repository secrets and skip this check.
   verify-registry-access:
     if: >-
       github.repository == 'checkpoint-restore/checkpoint-restore-operator' &&
-      github.event_name == 'pull_request' &&
-      github.event.pull_request.head.repo.full_name == github.repository &&
-      github.actor != 'dependabot[bot]'
+      (github.event_name != 'pull_request' ||
+       (github.event.pull_request.head.repo.full_name == github.repository &&
+        github.actor != 'dependabot[bot]'))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -55,8 +55,15 @@ jobs:
             criu/checkpoint-restore-operator-cri-proxy \
             criu/charts/checkpoint-restore-operator
 
+  # Build runs when the access check succeeded, or when it was skipped
+  # (fork and Dependabot pull requests, which build without pushing),
+  # but never when it failed.
   build:
-    if: ${{ github.repository == 'checkpoint-restore/checkpoint-restore-operator' }}
+    needs: verify-registry-access
+    if: >-
+      !cancelled() &&
+      github.repository == 'checkpoint-restore/checkpoint-restore-operator' &&
+      contains(fromJSON('["success", "skipped"]'), needs.verify-registry-access.result)
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false

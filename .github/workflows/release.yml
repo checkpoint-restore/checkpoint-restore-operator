@@ -66,9 +66,39 @@ jobs:
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "image_tag=v${VERSION}" >> "$GITHUB_OUTPUT"
 
-  images:
+  # Fail the release before anything is published if the registry
+  # credentials are missing push access to any target repository;
+  # nothing is pushed by this check.
+  verify-registry-access:
     if: ${{ needs.validate.outputs.release == 'true' }}
     needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Verify Docker Hub push access
+        env:
+          REGISTRY_USER: ${{ secrets.DOCKER_USERNAME }}
+          REGISTRY_PASS: ${{ secrets.DOCKER_PASSWORD }}
+        run: |
+          .github/scripts/verify-push-access.sh \
+            https://auth.docker.io/token registry.docker.io \
+            criu/checkpoint-restore-operator \
+            criu/checkpoint-restore-operator-cri-proxy
+
+      - name: Verify Quay.io push access
+        env:
+          REGISTRY_USER: ${{ secrets.QUAY_USERNAME }}
+          REGISTRY_PASS: ${{ secrets.QUAY_ROBOT_TOKEN }}
+        run: |
+          .github/scripts/verify-push-access.sh \
+            https://quay.io/v2/auth quay.io \
+            criu/checkpoint-restore-operator \
+            criu/checkpoint-restore-operator-cri-proxy \
+            criu/charts/checkpoint-restore-operator
+
+  images:
+    needs: [validate, verify-registry-access]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false

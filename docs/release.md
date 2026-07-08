@@ -15,7 +15,10 @@ The pull request validation packages the chart with the version from the
 `VERSION` file and verifies that the registry credentials have push access to
 every repository the release publishes to, so releases fail at review time
 rather than after merge. Pull requests from forks cannot access the
-repository secrets and skip the credential check.
+repository secrets and skip the credential check. The release workflow
+re-runs the same credential check before publishing anything, so a release
+with broken credentials fails before the first image is pushed rather than
+halfway through.
 
 ## If the release workflow fails
 
