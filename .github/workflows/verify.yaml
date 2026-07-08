@@ -8,6 +8,7 @@ on:
 
 jobs:
   lint:
+    name: Lint Go and shell code
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -43,6 +44,7 @@ jobs:
           shfmt -d ./test/*.sh
 
   kube-api-linter:
+    name: Lint Kubernetes API types
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -64,6 +66,7 @@ jobs:
         run: golangci-lint-kube-api-linter run -c .golangci-kube-api-linter.yml ./api/...
 
   gomod:
+    name: Verify go.mod and vendor
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -78,6 +81,7 @@ jobs:
           git diff --exit-code
 
   lint_markdown:
+    name: Lint markdown
     runs-on: ubuntu-latest
     permissions:
       pull-requests: read

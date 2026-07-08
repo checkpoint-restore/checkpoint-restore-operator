@@ -28,6 +28,7 @@ concurrency:
 
 jobs:
   validate:
+    name: Validate Helm chart
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
