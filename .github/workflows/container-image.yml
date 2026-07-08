@@ -18,6 +18,43 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
+  # Pull requests build images without pushing, so invalid registry
+  # credentials or missing push permissions would otherwise only
+  # surface after merge or during a release. Request push-scoped
+  # registry tokens and check the granted access instead; nothing is
+  # pushed. Pull requests from forks and from Dependabot run without
+  # the repository secrets and skip this check.
+  verify-registry-access:
+    if: >-
+      github.repository == 'checkpoint-restore/checkpoint-restore-operator' &&
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Verify Docker Hub push access
+        env:
+          REGISTRY_USER: ${{ secrets.DOCKER_USERNAME }}
+          REGISTRY_PASS: ${{ secrets.DOCKER_PASSWORD }}
+        run: |
+          .github/scripts/verify-push-access.sh \
+            https://auth.docker.io/token registry.docker.io \
+            criu/checkpoint-restore-operator \
+            criu/checkpoint-restore-operator-cri-proxy
+
+      - name: Verify Quay.io push access
+        env:
+          REGISTRY_USER: ${{ secrets.QUAY_USERNAME }}
+          REGISTRY_PASS: ${{ secrets.QUAY_ROBOT_TOKEN }}
+        run: |
+          .github/scripts/verify-push-access.sh \
+            https://quay.io/v2/auth quay.io \
+            criu/checkpoint-restore-operator \
+            criu/checkpoint-restore-operator-cri-proxy \
+            criu/charts/checkpoint-restore-operator
+
   build:
     if: ${{ github.repository == 'checkpoint-restore/checkpoint-restore-operator' }}
     runs-on: ubuntu-latest
