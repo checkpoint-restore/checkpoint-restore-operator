@@ -14,13 +14,13 @@ count_tar_files() {
 # Function to print logs of operator pods
 print_operator_pod_logs() {
 	echo "Fetching logs of operator pods:"
-	pod_names=$(kubectl -n checkpoint-restore-operator-system get pods -o jsonpath='{.items[*].metadata.name}')
+	pod_names=$(kubectl -n checkpoint-restore-operator get pods -o jsonpath='{.items[*].metadata.name}')
 	if [[ -z "$pod_names" ]]; then
 		echo "No operator pods found"
 	else
 		for pod_name in $pod_names; do
 			echo "Logs for pod $pod_name:"
-			kubectl -n checkpoint-restore-operator-system logs "$pod_name" || echo "Failed to fetch logs for pod $pod_name"
+			kubectl -n checkpoint-restore-operator logs "$pod_name" || echo "Failed to fetch logs for pod $pod_name"
 		done
 	fi
 }

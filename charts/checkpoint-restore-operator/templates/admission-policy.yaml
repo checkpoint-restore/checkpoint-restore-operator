@@ -1,0 +1,45 @@
+{{- if and .Values.operator.enabled .Values.admissionPolicy.enabled }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ include "checkpoint-restore-operator.admissionPolicy.name" . }}
+  labels:
+    {{- include "checkpoint-restore-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: admission-policy
+spec:
+  failurePolicy: {{ .Values.admissionPolicy.failurePolicy }}
+  matchConstraints:
+    resourceRules:
+      - apiGroups:
+          - ""
+        apiVersions:
+          - v1
+        operations:
+          - CREATE
+          - UPDATE
+        resources:
+          - pods
+  validations:
+    - expression: >-
+        request.userInfo.username == 'system:serviceaccount:{{ .Release.Namespace }}:{{ include "checkpoint-restore-operator.serviceAccountName" . }}' ||
+        !has(object.metadata.annotations) ||
+        object.metadata.annotations.all(k,
+          !k.startsWith('restore.criu.org/checkpoint-path.') ||
+          (oldObject != null &&
+           has(oldObject.metadata.annotations) &&
+           k in oldObject.metadata.annotations &&
+           object.metadata.annotations[k] == oldObject.metadata.annotations[k]))
+      message: restore.criu.org/checkpoint-path.* annotations can only be set or changed by the PodRestore controller
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ include "checkpoint-restore-operator.admissionPolicy.name" . }}
+  labels:
+    {{- include "checkpoint-restore-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: admission-policy
+spec:
+  policyName: {{ include "checkpoint-restore-operator.admissionPolicy.name" . }}
+  validationActions:
+    {{- toYaml .Values.admissionPolicy.validationActions | nindent 4 }}
+{{- end }}

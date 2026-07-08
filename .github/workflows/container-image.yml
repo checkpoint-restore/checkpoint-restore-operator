@@ -18,9 +18,60 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
+  # Pull requests build images without pushing, so invalid registry
+  # credentials or missing push permissions would otherwise only
+  # surface after merge or during a release. Request push-scoped
+  # registry tokens and check the granted access instead; nothing is
+  # pushed. Pull requests from forks and from Dependabot run without
+  # the repository secrets and skip this check.
+  verify-registry-access:
+    if: >-
+      github.repository == 'checkpoint-restore/checkpoint-restore-operator' &&
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Verify Docker Hub push access
+        env:
+          REGISTRY_USER: ${{ secrets.DOCKER_USERNAME }}
+          REGISTRY_PASS: ${{ secrets.DOCKER_PASSWORD }}
+        run: |
+          .github/scripts/verify-push-access.sh \
+            https://auth.docker.io/token registry.docker.io \
+            criu/checkpoint-restore-operator \
+            criu/checkpoint-restore-operator-cri-proxy
+
+      - name: Verify Quay.io push access
+        env:
+          REGISTRY_USER: ${{ secrets.QUAY_USERNAME }}
+          REGISTRY_PASS: ${{ secrets.QUAY_ROBOT_TOKEN }}
+        run: |
+          .github/scripts/verify-push-access.sh \
+            https://quay.io/v2/auth quay.io \
+            criu/checkpoint-restore-operator \
+            criu/checkpoint-restore-operator-cri-proxy \
+            criu/charts/checkpoint-restore-operator
+
   build:
     if: ${{ github.repository == 'checkpoint-restore/checkpoint-restore-operator' }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: manager
+            dockerfile: Dockerfile
+            tags: |
+              criu/checkpoint-restore-operator:latest
+              quay.io/criu/checkpoint-restore-operator:latest
+          - name: cri-proxy
+            dockerfile: Dockerfile.cri-proxy
+            tags: |
+              criu/checkpoint-restore-operator-cri-proxy:latest
+              quay.io/criu/checkpoint-restore-operator-cri-proxy:latest
     steps:
       - uses: actions/checkout@v6
 
@@ -42,14 +93,13 @@ jobs:
           username: ${{ secrets.QUAY_USERNAME }}
           password: ${{ secrets.QUAY_ROBOT_TOKEN }}
 
-      - name: Build and push image to Docker registry
+      - name: Build and push ${{ matrix.name }} image to Docker registry
         uses: docker/build-push-action@v7
         with:
           context: .
+          file: ${{ matrix.dockerfile }}
           platforms: linux/amd64
           push: ${{ github.event_name != 'pull_request' }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          tags: |
-            criu/checkpoint-restore-operator:latest
-            quay.io/criu/checkpoint-restore-operator:latest
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+          tags: ${{ matrix.tags }}

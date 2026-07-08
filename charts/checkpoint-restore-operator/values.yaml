@@ -1,0 +1,164 @@
+nameOverride: ""
+fullnameOverride: ""
+
+commonLabels: {}
+
+global:
+  image:
+    registry: ""
+
+image:
+  registry: ""
+  repository: criu/checkpoint-restore-operator
+  # Defaults to v<.Chart.AppVersion>. The release workflow sets appVersion
+  # from the VERSION file when packaging the chart.
+  tag: ""
+  pullPolicy: IfNotPresent
+  pullSecrets: []
+
+operator:
+  enabled: true
+  replicas: 1
+  revisionHistoryLimit: null
+
+  labels: {}
+  selectorLabels: {}
+  podLabels: {}
+  podAnnotations: {}
+
+  leaderElect: true
+  enableHTTP2: false
+
+  restore:
+    checkpointDirectory: /var/lib/kubelet/checkpoints
+    hostPathType: Directory
+    allowCrossNamespace: false
+
+  metrics:
+    # The metrics container port is derived from this address. Set to "0"
+    # to disable the metrics endpoint (this also disables the Service).
+    bindAddress: ":8443"
+    secure: true
+    service:
+      enabled: true
+      type: ClusterIP
+      port: 8443
+      portName: https
+      annotations: {}
+
+  healthProbe:
+    # The health container port used by the probes is derived from this
+    # address.
+    bindAddress: ":8081"
+    liveness:
+      path: /healthz
+      initialDelaySeconds: 15
+      periodSeconds: 20
+    readiness:
+      path: /readyz
+      initialDelaySeconds: 5
+      periodSeconds: 10
+
+  serviceAccount:
+    create: true
+    # Required when create is false. The admission policy exempts exactly
+    # this service account, so it must name the identity the manager
+    # actually runs as.
+    name: ""
+    annotations: {}
+
+  podSecurityContext: {}
+
+  # The manager writes restored checkpoint archives under the kubelet checkpoint
+  # hostPath, so it needs root and the narrow filesystem capabilities below.
+  containerSecurityContext:
+    runAsNonRoot: false
+    runAsUser: 0
+    allowPrivilegeEscalation: true
+    capabilities:
+      drop:
+        - ALL
+      add:
+        - DAC_OVERRIDE
+        - FOWNER
+
+  resources:
+    limits:
+      cpu: 500m
+      memory: 128Mi
+    requests:
+      cpu: 10m
+      memory: 64Mi
+
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+  extraArgs: []
+  extraEnv: []
+  envFrom: []
+  extraVolumeMounts: []
+  extraVolumes: []
+
+rbac:
+  create: true
+  metricsAuth:
+    enabled: true
+  metricsReader:
+    enabled: true
+  resourceRoles:
+    enabled: true
+
+admissionPolicy:
+  enabled: true
+  failurePolicy: Fail
+  validationActions:
+    - Deny
+
+criProxy:
+  enabled: false
+  image:
+    registry: ""
+    repository: criu/checkpoint-restore-operator-cri-proxy
+    # Defaults to v<.Chart.AppVersion>. Override for locally built images.
+    tag: ""
+    pullPolicy: IfNotPresent
+
+  # The host directories containing these sockets are mounted into the
+  # proxy pod, derived from the socket paths. For CRI-O set
+  # upstreamSocket to /run/crio/crio.sock.
+  upstreamSocket: /run/containerd/containerd.sock
+  listenSocket: /run/cr-restore-proxy/cri-proxy.sock
+  upstreamTimeout: 10s
+
+  health:
+    # The health container port used by the readiness probe is derived
+    # from this address.
+    bindAddress: ":8080"
+    timeout: 2s
+
+  hostPID: false
+  priorityClassName: system-node-critical
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations:
+    - operator: Exists
+  affinity: {}
+
+  securityContext:
+    runAsUser: 0
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop:
+        - ALL
+    seccompProfile:
+      type: RuntimeDefault
+
+  resources:
+    requests:
+      cpu: 25m
+      memory: 64Mi
+    limits:
+      memory: 128Mi

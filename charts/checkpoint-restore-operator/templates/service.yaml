@@ -1,0 +1,26 @@
+{{- /* No Service is rendered when the metrics endpoint itself is
+disabled with bindAddress "0"; a Service whose named targetPort matches
+no container port would select no endpoints. */}}
+{{- if and .Values.operator.enabled .Values.operator.metrics.service.enabled (ne (toString .Values.operator.metrics.bindAddress) "0") }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "checkpoint-restore-operator.metricsService.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "checkpoint-restore-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: metrics
+  {{- with .Values.operator.metrics.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.operator.metrics.service.type }}
+  ports:
+    - name: {{ .Values.operator.metrics.service.portName }}
+      port: {{ .Values.operator.metrics.service.port }}
+      protocol: TCP
+      targetPort: metrics
+  selector:
+    {{- include "checkpoint-restore-operator.manager.selectorLabels" . | nindent 4 }}
+{{- end }}

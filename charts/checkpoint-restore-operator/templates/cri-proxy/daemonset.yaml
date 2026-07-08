@@ -1,0 +1,97 @@
+{{- if .Values.criProxy.enabled }}
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "checkpoint-restore-operator.criProxy.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "checkpoint-restore-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: cri-proxy
+spec:
+  selector:
+    matchLabels:
+      {{- include "checkpoint-restore-operator.criProxy.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "checkpoint-restore-operator.criProxy.selectorLabels" . | nindent 8 }}
+        {{- with .Values.criProxy.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.criProxy.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      hostPID: {{ .Values.criProxy.hostPID }}
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.criProxy.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      {{- with .Values.criProxy.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.criProxy.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.criProxy.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: cri-proxy
+          image: {{ include "checkpoint-restore-operator.criProxy.image" . | quote }}
+          imagePullPolicy: {{ .Values.criProxy.image.pullPolicy }}
+          args:
+            - --upstream={{ .Values.criProxy.upstreamSocket }}
+            - --listen={{ .Values.criProxy.listenSocket }}
+            - --health-bind-address={{ .Values.criProxy.health.bindAddress }}
+            - --health-timeout={{ .Values.criProxy.health.timeout }}
+            - --upstream-timeout={{ .Values.criProxy.upstreamTimeout }}
+            - --checkpoint-dir={{ .Values.operator.restore.checkpointDirectory }}
+            - --allow-cross-namespace={{ .Values.operator.restore.allowCrossNamespace }}
+          {{- with .Values.criProxy.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            initialDelaySeconds: 2
+            periodSeconds: 5
+            failureThreshold: 3
+          ports:
+            - name: health
+              containerPort: {{ include "checkpoint-restore-operator.portFromBindAddress" .Values.criProxy.health.bindAddress }}
+              protocol: TCP
+          resources:
+            {{- toYaml .Values.criProxy.resources | nindent 12 }}
+          volumeMounts:
+            - name: runtime-sock
+              mountPath: {{ dir .Values.criProxy.upstreamSocket }}
+              readOnly: true
+            - name: proxy-sock
+              mountPath: {{ dir .Values.criProxy.listenSocket }}
+            - name: checkpoints
+              mountPath: {{ .Values.operator.restore.checkpointDirectory }}
+              readOnly: true
+      volumes:
+        - name: runtime-sock
+          hostPath:
+            path: {{ dir .Values.criProxy.upstreamSocket }}
+            type: Directory
+        - name: proxy-sock
+          hostPath:
+            path: {{ dir .Values.criProxy.listenSocket }}
+            type: DirectoryOrCreate
+        - name: checkpoints
+          hostPath:
+            path: {{ .Values.operator.restore.checkpointDirectory }}
+            type: DirectoryOrCreate
+{{- end }}

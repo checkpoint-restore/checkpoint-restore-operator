@@ -135,7 +135,29 @@ against a remote cluster.
 **Note:** Your controller will automatically use the current context in your
 *kubeconfig file (i.e. whatever cluster `kubectl cluster-info` shows).
 
+### Installing with Helm
+
+Released versions of the operator are published as a Helm chart to Quay:
+
+```sh
+helm install checkpoint-restore-operator \
+  oci://quay.io/criu/charts/checkpoint-restore-operator \
+  --version <version> \
+  --namespace checkpoint-restore-operator \
+  --create-namespace
+```
+
+The container images for each release are published to
+[Docker Hub](https://hub.docker.com/r/criu/checkpoint-restore-operator) and
+[Quay](https://quay.io/repository/criu/checkpoint-restore-operator), and
+`latest` images are built from the main branch. See
+[charts/checkpoint-restore-operator](charts/checkpoint-restore-operator/README.md)
+for the available chart values and how to enable the optional CRI proxy
+DaemonSet.
+
 ### Running on the Cluster
+
+To build and deploy the operator from source:
 
 1. Install Instances of Custom Resources:
 
@@ -203,6 +225,8 @@ Certificate of Origin 1.1](http://developercertificate.org/). This is achieved
 by adding a "Signed-off-by" line containing the contributor's name and e-mail
 to every commit message. Your signature certifies that you wrote the patch or
 otherwise have the right to pass it on as an open-source patch.
+
+The release process is documented in [docs/release.md](docs/release.md).
 
 ### Test It Out
 

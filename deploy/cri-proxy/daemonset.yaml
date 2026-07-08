@@ -16,7 +16,7 @@ apiVersion: apps/v1
 kind: DaemonSet
 metadata:
   name: cri-restore-proxy
-  namespace: checkpoint-restore-operator-system
+  namespace: checkpoint-restore-operator
   labels:
     app.kubernetes.io/name: cri-restore-proxy
     app.kubernetes.io/part-of: checkpoint-restore-operator
