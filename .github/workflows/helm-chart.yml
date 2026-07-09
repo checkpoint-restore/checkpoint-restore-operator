@@ -3,21 +3,12 @@ name: helm-chart
 on:
   push:
     branches: [main]
-    paths:
-      - "charts/checkpoint-restore-operator/**"
-      - ".github/workflows/helm-chart.yml"
-      - ".github/workflows/release.yml"
-      - "VERSION"
   pull_request:
     branches: [main]
-    paths:
-      - "charts/checkpoint-restore-operator/**"
-      - ".github/workflows/helm-chart.yml"
-      - ".github/workflows/release.yml"
-      - "VERSION"
 
 permissions:
   contents: read
+  pull-requests: read
 
 env:
   HELM_KUBE_VERSION: "1.30.0"
@@ -27,8 +18,33 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
+  changes:
+    name: Detect Helm chart inputs
+    runs-on: ubuntu-latest
+    outputs:
+      chart: ${{ steps.filter.outputs.chart }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          base: "main"
+          filters: |
+            chart:
+              - '.github/workflows/helm-chart.yml'
+              - '.github/workflows/release.yml'
+              - 'VERSION'
+              - 'charts/checkpoint-restore-operator/**'
+              - 'config/crd/bases/**'
+              - 'config/rbac/role.yaml'
+
   validate:
     name: Validate Helm chart
+    needs: changes
+    if: needs.changes.outputs.chart == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6

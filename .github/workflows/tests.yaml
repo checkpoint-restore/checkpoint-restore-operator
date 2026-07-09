@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
 # Cancel any preceding run on the pull request.
 concurrency:
@@ -15,8 +16,65 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
+  changes:
+    name: Detect test inputs
+    runs-on: ubuntu-latest
+    outputs:
+      unit: ${{ steps.filter.outputs.unit }}
+      cri_proxy: ${{ steps.filter.outputs.cri_proxy }}
+      e2e: ${{ steps.filter.outputs.e2e }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          base: "main"
+          filters: |
+            unit:
+              - '.github/workflows/tests.yaml'
+              - 'api/**'
+              - 'cmd/**'
+              - 'internal/**'
+              - 'go.mod'
+              - 'go.sum'
+              - 'Makefile'
+              - 'test/**'
+              - 'vendor/**'
+            cri_proxy:
+              - '.github/workflows/tests.yaml'
+              - '.dockerignore'
+              - 'api/v1/podrestore_types.go'
+              - 'cmd/cri-proxy/**'
+              - 'internal/checkpointarchive/**'
+              - 'internal/criproxy/**'
+              - 'go.mod'
+              - 'go.sum'
+              - 'Makefile'
+              - 'Dockerfile.cri-proxy'
+              - 'vendor/**'
+            e2e:
+              - '.github/workflows/tests.yaml'
+              - '.dockerignore'
+              - 'api/**'
+              - 'cmd/**'
+              - 'config/**'
+              - 'deploy/cri-proxy/**'
+              - 'internal/**'
+              - 'test/**'
+              - 'go.mod'
+              - 'go.sum'
+              - 'Makefile'
+              - 'Dockerfile'
+              - 'Dockerfile.cri-proxy'
+              - 'vendor/**'
+
   unit-tests:
     name: Unit tests
+    needs: changes
+    if: needs.changes.outputs.unit == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -36,6 +94,8 @@ jobs:
 
   build-cri-proxy:
     name: Build CRI proxy
+    needs: changes
+    if: needs.changes.outputs.cri_proxy == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -53,6 +113,8 @@ jobs:
 
   build-and-deploy:
     name: e2e (${{ matrix.name }})
+    needs: changes
+    if: needs.changes.outputs.e2e == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
