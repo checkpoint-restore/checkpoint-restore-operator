@@ -6,14 +6,82 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+  pull-requests: read
+
 # Cancel any preceding run on the pull request.
 concurrency:
   group: verify-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
+  changes:
+    name: Detect verification inputs
+    runs-on: ubuntu-latest
+    outputs:
+      code_lint: ${{ steps.filter.outputs.code_lint }}
+      spelling: ${{ steps.filter.outputs.spelling }}
+      api_lint: ${{ steps.filter.outputs.api_lint }}
+      gomod: ${{ steps.filter.outputs.gomod }}
+      markdown: ${{ steps.filter.outputs.markdown }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          base: "main"
+          filters: |
+            code_lint:
+              - '.github/workflows/**'
+              - 'api/**/*.go'
+              - 'cmd/**/*.go'
+              - 'internal/**/*.go'
+              - 'go.mod'
+              - 'go.sum'
+              - 'Makefile'
+              - 'test/*.sh'
+              - 'vendor/**'
+            spelling:
+              - '.github/**'
+              - 'api/**'
+              - 'charts/**'
+              - 'cmd/**'
+              - 'config/**'
+              - 'deploy/**'
+              - 'docs/**'
+              - 'internal/**'
+              - 'test/**'
+              - 'README.md'
+              - 'MAINTAINERS'
+              - 'Makefile'
+              - 'Dockerfile'
+              - 'Dockerfile.cri-proxy'
+              - 'PROJECT'
+              - 'VERSION'
+            api_lint:
+              - '.github/workflows/verify.yaml'
+              - '.golangci-kube-api-linter.yml'
+              - 'api/**'
+            gomod:
+              - '.github/workflows/verify.yaml'
+              - 'go.mod'
+              - 'go.sum'
+              - 'Makefile'
+              - 'vendor/**'
+            markdown:
+              - '.github/workflows/verify.yaml'
+              - 'README.md'
+              - 'charts/**/*.md'
+              - 'docs/**/*.md'
+
   lint:
     name: Lint Go and shell code
+    needs: changes
+    if: needs.changes.outputs.code_lint == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -23,10 +91,11 @@ jobs:
         with:
           go-version-file: "go.mod"
 
-      - name: Install ShellCheck and shfmt
+      - name: Install ShellCheck, shfmt, and actionlint
         run: |
           sudo apt update
           sudo apt install -y shellcheck shfmt
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
 
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v9
@@ -37,19 +106,30 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: ShellCheck, shfmt, and actionlint
+        run: |
+          shellcheck ./test/*.sh
+          shfmt -d ./test/*.sh
+          actionlint .github/workflows/*.yml .github/workflows/*.yaml
+
+  codespell:
+    name: Check spelling
+    needs: changes
+    if: needs.changes.outputs.spelling == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
       - name: codespell
         uses: codespell-project/actions-codespell@v2
         with:
           skip: vendor,*.svg
           ignore_words_list: notin
 
-      - name: ShellCheck and shfmt
-        run: |
-          shellcheck ./test/*.sh
-          shfmt -d ./test/*.sh
-
   kube-api-linter:
     name: Lint Kubernetes API types
+    needs: changes
+    if: needs.changes.outputs.api_lint == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -72,6 +152,8 @@ jobs:
 
   gomod:
     name: Verify go.mod and vendor
+    needs: changes
+    if: needs.changes.outputs.gomod == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -87,23 +169,16 @@ jobs:
 
   lint_markdown:
     name: Lint markdown
+    needs: changes
+    if: needs.changes.outputs.markdown == 'true'
     runs-on: ubuntu-latest
-    permissions:
-      pull-requests: read
     steps:
       - uses: actions/checkout@v6
-      - uses: dorny/paths-filter@v4
-        id: changes
-        with:
-          base: "main"
-          filters: |
-            md:
-              - 'README.md'
-              - '.github/workflows/verify.yml'
 
       - name: Lint markdown
-        if: steps.changes.outputs.md == 'true'
         uses: DavidAnson/markdownlint-cli2-action@v23
         with:
           globs: |
             README.md
+            docs/**/*.md
+            charts/**/*.md

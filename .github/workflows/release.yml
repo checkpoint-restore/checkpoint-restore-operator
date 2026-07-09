@@ -63,9 +63,11 @@ jobs:
             exit "${rc}"
           fi
 
-          echo "release=true" >> "$GITHUB_OUTPUT"
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "image_tag=v${VERSION}" >> "$GITHUB_OUTPUT"
+          {
+            echo "release=true"
+            echo "version=${VERSION}"
+            echo "image_tag=v${VERSION}"
+          } >> "$GITHUB_OUTPUT"
 
   # Fail the release before anything is published if the registry
   # credentials are missing push access to any target repository;

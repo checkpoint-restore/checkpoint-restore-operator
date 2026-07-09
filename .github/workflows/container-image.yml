@@ -12,12 +12,52 @@ on:
     # "At minute 15 past every 4th hour from midnight through 23."
     - cron: "15 0-23/4 * * *"
 
+permissions:
+  contents: read
+  pull-requests: read
+
 # Cancel any preceding run on the pull request.
 concurrency:
   group: container-image-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
+  changes:
+    name: Detect image inputs
+    runs-on: ubuntu-latest
+    outputs:
+      images: ${{ steps.schedule.outputs.images || steps.filter.outputs.images }}
+    steps:
+      - name: Always build scheduled images
+        if: github.event_name == 'schedule'
+        id: schedule
+        run: echo "images=true" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v6
+        if: github.event_name != 'schedule'
+        with:
+          fetch-depth: 0
+
+      - uses: dorny/paths-filter@v4
+        if: github.event_name != 'schedule'
+        id: filter
+        with:
+          base: "main"
+          filters: |
+            images:
+              - '.github/scripts/verify-push-access.sh'
+              - '.github/workflows/container-image.yml'
+              - '.dockerignore'
+              - 'api/**'
+              - 'cmd/**'
+              - 'internal/**'
+              - 'go.mod'
+              - 'go.sum'
+              - 'Makefile'
+              - 'Dockerfile'
+              - 'Dockerfile.cri-proxy'
+              - 'vendor/**'
+
   # Request push-scoped registry tokens and check that the granted
   # access includes push; nothing is pushed by this check. On push and
   # schedule events this gates the image push below, so broken
@@ -26,8 +66,10 @@ jobs:
   # repository secrets and skip this check.
   verify-registry-access:
     name: Verify registry push access
+    needs: changes
     if: >-
       github.repository == 'checkpoint-restore/checkpoint-restore-operator' &&
+      (github.event_name == 'schedule' || needs.changes.outputs.images == 'true') &&
       (github.event_name != 'pull_request' ||
        (github.event.pull_request.head.repo.full_name == github.repository &&
         github.actor != 'dependabot[bot]'))
@@ -61,10 +103,12 @@ jobs:
   # but never when it failed.
   build:
     name: Build ${{ matrix.name }} image
-    needs: verify-registry-access
+    needs: [changes, verify-registry-access]
     if: >-
+      always() &&
       !cancelled() &&
       github.repository == 'checkpoint-restore/checkpoint-restore-operator' &&
+      (github.event_name == 'schedule' || needs.changes.outputs.images == 'true') &&
       contains(fromJSON('["success", "skipped"]'), needs.verify-registry-access.result)
     runs-on: ubuntu-latest
     strategy:

@@ -1,4 +1,8 @@
 #!/bin/bash
+set -euo pipefail
+
+: "${REGISTRY_PORT:?REGISTRY_PORT must be set}"
+: "${REGISTRY_NAME:?REGISTRY_NAME must be set}"
 
 # Set variables
 reg_port="${REGISTRY_PORT}"

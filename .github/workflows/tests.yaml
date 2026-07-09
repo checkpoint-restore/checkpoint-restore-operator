@@ -6,14 +6,75 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+  pull-requests: read
+
 # Cancel any preceding run on the pull request.
 concurrency:
   group: tests-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
+  changes:
+    name: Detect test inputs
+    runs-on: ubuntu-latest
+    outputs:
+      unit: ${{ steps.filter.outputs.unit }}
+      cri_proxy: ${{ steps.filter.outputs.cri_proxy }}
+      e2e: ${{ steps.filter.outputs.e2e }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          base: "main"
+          filters: |
+            unit:
+              - '.github/workflows/tests.yaml'
+              - 'api/**'
+              - 'cmd/**'
+              - 'internal/**'
+              - 'go.mod'
+              - 'go.sum'
+              - 'Makefile'
+              - 'test/**'
+              - 'vendor/**'
+            cri_proxy:
+              - '.github/workflows/tests.yaml'
+              - '.dockerignore'
+              - 'api/v1/podrestore_types.go'
+              - 'cmd/cri-proxy/**'
+              - 'internal/checkpointarchive/**'
+              - 'internal/criproxy/**'
+              - 'go.mod'
+              - 'go.sum'
+              - 'Makefile'
+              - 'Dockerfile.cri-proxy'
+              - 'vendor/**'
+            e2e:
+              - '.github/workflows/tests.yaml'
+              - '.dockerignore'
+              - 'api/**'
+              - 'cmd/**'
+              - 'config/**'
+              - 'deploy/cri-proxy/**'
+              - 'internal/**'
+              - 'test/**'
+              - 'go.mod'
+              - 'go.sum'
+              - 'Makefile'
+              - 'Dockerfile'
+              - 'Dockerfile.cri-proxy'
+              - 'vendor/**'
+
   unit-tests:
     name: Unit tests
+    needs: changes
+    if: needs.changes.outputs.unit == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -33,6 +94,8 @@ jobs:
 
   build-cri-proxy:
     name: Build CRI proxy
+    needs: changes
+    if: needs.changes.outputs.cri_proxy == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -45,14 +108,13 @@ jobs:
       - name: Build cri-proxy binary
         run: make build-cri-proxy
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
       - name: Build cri-proxy image
         run: make docker-build-cri-proxy CRI_PROXY_IMG=cri-proxy:ci
 
   build-and-deploy:
     name: e2e (${{ matrix.name }})
+    needs: changes
+    if: needs.changes.outputs.e2e == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -71,15 +133,19 @@ jobs:
           - name: containerd-k8s-1.33
             provider: kind
             kind_node_image: kindest/node:v1.33.12@sha256:3f5c8443c620245e4d355cfe09e96a91ead32ceaa569d3f1ca9edf0cb2fe2ff4
+            kubectl_version: v1.33.12
           - name: containerd-k8s-1.34
             provider: kind
             kind_node_image: kindest/node:v1.34.8@sha256:02722c2dedddcfc00febf5d27fbeb9b7b2c14294c82109ff4a85d89ac9ba3256
+            kubectl_version: v1.34.8
           - name: containerd-k8s-1.35
             provider: kind
             kind_node_image: kindest/node:v1.35.5@sha256:ce977ae6d65918d0b58a5f8b5e940429c2ce42fa3a5619ec2bbc60b949c0ac95
+            kubectl_version: v1.35.5
           - name: containerd-k8s-1.36
             provider: kind
             kind_node_image: kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5
+            kubectl_version: v1.36.1
           - name: crio-k8s-1.30
             provider: kubeadm-crio
             k8s_stream: v1.30
@@ -108,6 +174,8 @@ jobs:
           - 5000:5000
     env:
       CHECKPOINT_DIR: /var/lib/kubelet/checkpoints
+      FLANNEL_VERSION: v0.28.7
+      METRICS_SERVER_VERSION: v0.8.1
       REGISTRY_PORT: 5000
     steps:
       - name: Checkout code
@@ -117,9 +185,6 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version-file: "go.mod"
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v4
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -139,6 +204,7 @@ jobs:
           # unauthenticated GitHub API, which gets rate limited when
           # all matrix lanes query it at the same time.
           KIND_VERSION: v0.32.0
+          KUBECTL_VERSION: ${{ matrix.kubectl_version }}
         run: |
           # Install kind
           curl -fsSLo kind --retry 5 --retry-all-errors \
@@ -147,8 +213,8 @@ jobs:
           sudo mv kind /bin/
 
           # Install kubectl
-          curl -fsSLO --retry 5 --retry-all-errors \
-            "https://dl.k8s.io/release/$(curl -fsSL --retry 5 --retry-all-errors https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          curl -fsSLo kubectl --retry 5 --retry-all-errors \
+            "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
           chmod +x kubectl
           sudo mv kubectl /bin/
 
@@ -172,7 +238,7 @@ jobs:
 
       - name: Install metrics-server
         run: |
-          kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+          kubectl apply -f "https://github.com/kubernetes-sigs/metrics-server/releases/download/${METRICS_SERVER_VERSION}/components.yaml"
           kubectl patch -n kube-system deployment metrics-server --type=json \
             -p '[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]'
           kubectl rollout status -n kube-system deployment/metrics-server --timeout=180s
@@ -181,13 +247,13 @@ jobs:
         if: matrix.provider == 'kind'
         id: connect-registry
         run: |
-          REGISTRY_ID=$(docker ps -qf "ancestor=registry:2")
-          REGISTRY_NAME=$(docker inspect -f '{{.Name}}' $REGISTRY_ID | sed 's/\///')
-          echo "REGISTRY_NAME=$REGISTRY_NAME" >> $GITHUB_ENV
+          set -euo pipefail
+          REGISTRY_ID="$(docker ps -qf "ancestor=registry:2")"
+          REGISTRY_NAME="$(docker inspect -f '{{.Name}}' "${REGISTRY_ID}" | sed 's#^/##')"
+          export REGISTRY_NAME
           ./test/configure_local_registry.sh
         env:
           REGISTRY_PORT: ${{ env.REGISTRY_PORT }}
-          REGISTRY_NAME: ${{ env.REGISTRY_NAME }}
 
       - name: Build and push to local registry
         uses: docker/build-push-action@v7
