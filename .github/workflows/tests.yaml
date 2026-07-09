@@ -1,4 +1,4 @@
-name: Build and Deploy
+name: tests
 
 on:
   push:
@@ -6,8 +6,14 @@ on:
   pull_request:
     branches: [main]
 
+# Cancel any preceding run on the pull request.
+concurrency:
+  group: tests-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
   unit-tests:
+    name: Unit tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -26,6 +32,7 @@ jobs:
         run: go test -race -coverprofile=cover.out ./...
 
   build-cri-proxy:
+    name: Build CRI proxy
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -45,7 +52,55 @@ jobs:
         run: make docker-build-cri-proxy CRI_PROXY_IMG=cri-proxy:ci
 
   build-and-deploy:
+    name: e2e (${{ matrix.name }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Two dimensions: container runtime and Kubernetes version.
+        # containerd runs in kind with pinned node images, covering
+        # every Kubernetes version shipped with the current kind
+        # release. CRI-O is not supported by kind, so those lanes run
+        # a single-node kubeadm cluster directly on the runner, using
+        # pkgs.k8s.io for Kubernetes and the upstream CRI-O package
+        # repositories, covering every version from the oldest supported
+        # by the Helm chart to the newest release.
+        # Update the pinned versions when a new kind release or
+        # Kubernetes minor comes out.
+        include:
+          - name: containerd-k8s-1.33
+            provider: kind
+            kind_node_image: kindest/node:v1.33.12@sha256:3f5c8443c620245e4d355cfe09e96a91ead32ceaa569d3f1ca9edf0cb2fe2ff4
+          - name: containerd-k8s-1.34
+            provider: kind
+            kind_node_image: kindest/node:v1.34.8@sha256:02722c2dedddcfc00febf5d27fbeb9b7b2c14294c82109ff4a85d89ac9ba3256
+          - name: containerd-k8s-1.35
+            provider: kind
+            kind_node_image: kindest/node:v1.35.5@sha256:ce977ae6d65918d0b58a5f8b5e940429c2ce42fa3a5619ec2bbc60b949c0ac95
+          - name: containerd-k8s-1.36
+            provider: kind
+            kind_node_image: kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5
+          - name: crio-k8s-1.30
+            provider: kubeadm-crio
+            k8s_stream: v1.30
+          - name: crio-k8s-1.31
+            provider: kubeadm-crio
+            k8s_stream: v1.31
+          - name: crio-k8s-1.32
+            provider: kubeadm-crio
+            k8s_stream: v1.32
+          - name: crio-k8s-1.33
+            provider: kubeadm-crio
+            k8s_stream: v1.33
+          - name: crio-k8s-1.34
+            provider: kubeadm-crio
+            k8s_stream: v1.34
+          - name: crio-k8s-1.35
+            provider: kubeadm-crio
+            k8s_stream: v1.35
+          - name: crio-k8s-1.36
+            provider: kubeadm-crio
+            k8s_stream: v1.36
     services:
       registry:
         image: registry:2
@@ -71,19 +126,29 @@ jobs:
         with:
           driver-opts: network=host
 
-      - name: Install dependencies
+      - name: Install bats
         run: |
-          # Install bats
           sudo apt-get update
           sudo apt-get install -y bats
 
+      - name: Install kind and kubectl
+        if: matrix.provider == 'kind'
+        env:
+          # Keep in sync with the pinned node images in the matrix.
+          # Downloading a pinned release directly also avoids the
+          # unauthenticated GitHub API, which gets rate limited when
+          # all matrix lanes query it at the same time.
+          KIND_VERSION: v0.32.0
+        run: |
           # Install kind
-          curl -sLo kind "$(curl -sL https://api.github.com/repos/kubernetes-sigs/kind/releases/latest | jq -r '[.assets[] | select(.name == "kind-linux-amd64")] | first | .browser_download_url')"
+          curl -fsSLo kind --retry 5 --retry-all-errors \
+            "https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/kind-linux-amd64"
           chmod +x kind
           sudo mv kind /bin/
 
           # Install kubectl
-          curl -LO "https://storage.googleapis.com/kubernetes-release/release/$(curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl"
+          curl -fsSLO --retry 5 --retry-all-errors \
+            "https://dl.k8s.io/release/$(curl -fsSL --retry 5 --retry-all-errors https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
           chmod +x kubectl
           sudo mv kubectl /bin/
 
@@ -95,10 +160,15 @@ jobs:
       - name: Generate Checkpoint Tar Files
         run: ./test/generate_checkpoint_tar.sh
 
-      - name: Create Kubernetes cluster
+      - name: Create Kubernetes cluster (kind, containerd)
+        if: matrix.provider == 'kind'
         run: |
-          kind create cluster --config=./test/kind-config.yaml
+          kind create cluster --config=./test/kind-config.yaml --image=${{ matrix.kind_node_image }}
           kind export kubeconfig
+
+      - name: Create Kubernetes cluster (kubeadm, CRI-O)
+        if: matrix.provider == 'kubeadm-crio'
+        run: ./test/setup_kubeadm_crio.sh ${{ matrix.k8s_stream }}
 
       - name: Install metrics-server
         run: |
@@ -108,6 +178,7 @@ jobs:
           kubectl rollout status -n kube-system deployment/metrics-server --timeout=180s
 
       - name: Connect the registry to the Kind network
+        if: matrix.provider == 'kind'
         id: connect-registry
         run: |
           REGISTRY_ID=$(docker ps -qf "ancestor=registry:2")
