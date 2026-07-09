@@ -11,10 +11,10 @@ of the checkpoint into an OCI image). This is implemented with two pieces:
 
 ![PodRestore checkpoint restore flow](images/podrestore-flow.svg)
 
-The kubelet drives its normal sequence: `RunPodSandbox`, then
-`CreateContainer`, then `StartContainer`. It never knows a restore is happening.
-The CRI proxy is the only component that does: it forwards every CRI call
-unchanged **except** `CreateContainer`, where, if the Pod sandbox carries
+The kubelet drives its normal sequence: `RunPodSandbox`, then `CreateContainer`,
+then `StartContainer`. It never knows a restore is happening. The CRI proxy is
+the only component that does: it forwards every CRI call unchanged **except**
+`CreateContainer`, where, if the Pod sandbox carries
 `restore.criu.org/checkpoint-path.<container>` for the container being created,
 it rewrites that container's image to the local `.tar` path so the runtime takes
 its CRIU restore path.
@@ -30,11 +30,11 @@ kind: PodRestore
 metadata:
   name: redis-restore
 spec:
-  targetNode: worker-1                 # node that holds the checkpoint .tar
+  targetNode: worker-1 # node that holds the checkpoint .tar
   checkpoints:
     - container: redis
       path: /var/lib/kubelet/checkpoints/checkpoint-redis_default-redis-<ts>.tar
-  template:                            # the restored workload
+  template: # the restored workload
     spec:
       containers:
         - name: redis
@@ -47,11 +47,11 @@ so it is not garbage-collected during the restore when the archive is reachable
 from the operator. The pin is released when the `PodRestore` is deleted, and an
 archive shared by several restores stays pinned until the last one is gone.
 Cross-node, it reports `CheckpointsPinned=False` and you must retain the archive
-on the target node yourself. Progress is reported through status conditions: `Ready` is the
-summary (`True` once the restored Pod runs), and its `reason` carries the detail:
-`Restoring`, `RenderFailed`, `NodeNotFound`, `InvalidSpec`, `PodConflict`,
-`PodFailed`, `PodMissing`, or `Restored`. `CheckpointsPinned` reports retention
-pinning. There is no `phase` field; read the conditions:
+on the target node yourself. Progress is reported through status conditions:
+`Ready` is the summary (`True` once the restored Pod runs), and its `reason`
+carries the detail: `Restoring`, `RenderFailed`, `NodeNotFound`, `InvalidSpec`,
+`PodConflict`, `PodFailed`, `PodMissing`, or `Restored`. `CheckpointsPinned`
+reports retention pinning. There is no `phase` field; read the conditions:
 
 ```sh
 kubectl get podrestore redis-restore \
@@ -135,13 +135,13 @@ arbitrary checkpoint state, so:
 - Restores are namespace-confined. The controller checks the archive filename
   against the PodRestore's namespace (a coarse gate; the kubelet naming
   convention is only prefix-checkable); the proxy performs the authoritative
-  check by comparing the namespace recorded *inside* the archive by the runtime
+  check by comparing the namespace recorded _inside_ the archive by the runtime
   at checkpoint time with the namespace of the pod sandbox being created, and
   fails closed when the archive is unreadable or records no namespace. To permit
   deliberate cross-namespace restores, a cluster admin must set **both** the
   operator's `--restore-allow-cross-namespace` and the proxy's
   `--allow-cross-namespace` flags.
-- The CRI proxy validates all of the above independently before handing the
-  path to the runtime — it does not trust the annotation — but it cannot tell an
+- The CRI proxy validates all of the above independently before handing the path
+  to the runtime — it does not trust the annotation — but it cannot tell an
   authorized annotation from a forged one within the same namespace and
   directory; that is the admission policy's job. Do not rely on the proxy alone.
