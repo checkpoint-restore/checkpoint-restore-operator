@@ -112,7 +112,7 @@ jobs:
         run: make docker-build-cri-proxy CRI_PROXY_IMG=cri-proxy:ci
 
   build-and-deploy:
-    name: e2e (${{ matrix.name }})
+    name: e2e tests
     needs: changes
     if: needs.changes.outputs.e2e == 'true'
     runs-on: ubuntu-latest

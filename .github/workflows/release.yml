@@ -102,7 +102,7 @@ jobs:
             criu/charts/checkpoint-restore-operator
 
   images:
-    name: Push ${{ matrix.name }} image
+    name: Push release images
     needs: [validate, verify-registry-access]
     runs-on: ubuntu-latest
     strategy:

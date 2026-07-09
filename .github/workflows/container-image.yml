@@ -110,7 +110,7 @@ jobs:
   # (fork and Dependabot pull requests, which build without pushing),
   # but never when it failed.
   build:
-    name: Build ${{ matrix.name }} image
+    name: Build images
     needs: [changes, verify-registry-access]
     if: >-
       always() &&
