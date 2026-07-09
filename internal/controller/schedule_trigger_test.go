@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/go-logr/logr"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
@@ -36,6 +37,7 @@ import (
 type mockCheckpointer struct {
 	mu    sync.Mutex
 	err   error
+	path  string
 	calls []checkpointCall
 }
 
@@ -47,7 +49,7 @@ func (m *mockCheckpointer) createCheckpoint(_ context.Context, ns, pod, containe
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.calls = append(m.calls, checkpointCall{ns, pod, container, node})
-	return "", m.err
+	return m.path, m.err
 }
 
 func makeSchedule(containerNames []string, interval time.Duration) *v1.CheckpointSchedule {
@@ -73,6 +75,7 @@ var _ = Describe("runScheduledCheckpoints", func() {
 	var mock *mockCheckpointer
 
 	BeforeEach(func() {
+		Expect(v1.AddToScheme(scheme.Scheme)).To(Succeed())
 		mock = &mockCheckpointer{}
 	})
 
@@ -124,5 +127,32 @@ var _ = Describe("runScheduledCheckpoints", func() {
 
 		Expect(created).To(Equal(int32(0)))
 		Expect(mock.calls).To(BeEmpty())
+	})
+
+	It("records a CheckpointArchive when the global policy opts in", func() {
+		resetAllPoliciesToDefault(logr.Discard())
+		DeferCleanup(func() { resetAllPoliciesToDefault(logr.Discard()) })
+		(&CheckpointRestoreOperatorReconciler{}).handleGlobalPolicies(logr.Discard(), &v1.GlobalPolicySpec{
+			UploadToExternalStorage: ptr(true),
+		})
+
+		mock.path = "/var/lib/kubelet/checkpoints/x.tar"
+		pod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "pod-1", Namespace: "default",
+				Labels: map[string]string{"app": "test"},
+			},
+			Spec:   corev1.PodSpec{NodeName: "node-a", Containers: []corev1.Container{{Name: "app"}}},
+			Status: corev1.PodStatus{Phase: corev1.PodRunning},
+		}
+		c := makeClient(pod)
+
+		created := runScheduledCheckpoints(context.Background(), c, mock, makeSchedule(nil, time.Hour))
+		Expect(created).To(Equal(int32(1)))
+
+		var list v1.CheckpointArchiveList
+		Expect(c.List(context.Background(), &list)).To(Succeed())
+		Expect(list.Items).To(HaveLen(1))
+		Expect(list.Items[0].Spec.Node).To(Equal("node-a"))
 	})
 })

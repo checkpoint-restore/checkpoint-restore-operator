@@ -156,9 +156,13 @@ func (rt *ResourceTrigger) run(ctx context.Context) {
 			logger.Info("resource trigger: threshold exceeded, checkpointing",
 				"pod", pod.Name, "container", cm.Name, "reason", reason)
 
-			if _, err := rt.creator.createCheckpoint(ctx, pod.Namespace, pod.Name, cm.Name, pod.Spec.NodeName); err != nil {
+			path, err := rt.creator.createCheckpoint(ctx, pod.Namespace, pod.Name, cm.Name, pod.Spec.NodeName)
+			if err != nil {
 				logger.Error(err, "resource trigger: checkpoint failed", "pod", pod.Name, "container", cm.Name)
 				continue
+			}
+			if err := recordCheckpointArchiveIfEnabled(ctx, rt.client, pod.Namespace, pod.Name, cm.Name, pod.Spec.NodeName, path); err != nil {
+				logger.Error(err, "resource trigger: failed to record checkpoint archive", "pod", pod.Name, "container", cm.Name)
 			}
 
 			rt.mu.Lock()

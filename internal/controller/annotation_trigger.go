@@ -69,9 +69,14 @@ func (at *AnnotationTrigger) run(ctx context.Context) {
 
 		failed := false
 		for _, c := range filterContainers(pod, at.schedule.Spec.ContainerNames) {
-			if _, err := at.creator.createCheckpoint(ctx, pod.Namespace, pod.Name, c.Name, pod.Spec.NodeName); err != nil {
+			path, err := at.creator.createCheckpoint(ctx, pod.Namespace, pod.Name, c.Name, pod.Spec.NodeName)
+			if err != nil {
 				logger.Error(err, "annotation trigger: checkpoint failed", "pod", pod.Name, "container", c.Name)
 				failed = true
+				continue
+			}
+			if err := recordCheckpointArchiveIfEnabled(ctx, at.client, pod.Namespace, pod.Name, c.Name, pod.Spec.NodeName, path); err != nil {
+				logger.Error(err, "annotation trigger: failed to record checkpoint archive", "pod", pod.Name, "container", c.Name)
 			}
 		}
 

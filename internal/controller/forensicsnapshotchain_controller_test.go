@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/go-logr/logr"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -649,6 +650,27 @@ var _ = Describe("ForensicSnapshotChainReconciler", func() {
 		Expect(updated.Status.Phase).To(Equal(criuorgv1.PhaseFailed))
 		Expect(updated.Status.ErrorMessage).To(ContainSubstring("md5"))
 		Expect(mock.calls).To(BeEmpty())
+	})
+
+	It("records a CheckpointArchive when the global policy opts in", func() {
+		resetAllPoliciesToDefault(logr.Discard())
+		DeferCleanup(func() { resetAllPoliciesToDefault(logr.Discard()) })
+		(&CheckpointRestoreOperatorReconciler{}).handleGlobalPolicies(logr.Discard(), &criuorgv1.GlobalPolicySpec{
+			UploadToExternalStorage: ptr(true),
+		})
+
+		chain := runningChain()
+		mock := &mockCheckpointer{path: "/var/lib/kubelet/checkpoints/x.tar"}
+		pod := runningPod("pod-a", map[string]string{"app": "test"}, "c1")
+		r := makeRunningReconciler(chain, mock, pod)
+
+		_, err := r.Reconcile(context.Background(), request)
+		Expect(err).ToNot(HaveOccurred())
+
+		var list criuorgv1.CheckpointArchiveList
+		Expect(r.List(context.Background(), &list)).To(Succeed())
+		Expect(list.Items).To(HaveLen(1))
+		Expect(list.Items[0].Spec.Node).To(Equal("node-1"))
 	})
 
 	It("records a snapshot without a hash when hashAlgorithm is empty", func() {

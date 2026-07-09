@@ -361,6 +361,11 @@ func (r *ForensicSnapshotChainReconciler) Reconcile(ctx context.Context, req ctr
 
 				captured++
 
+				if err := recordCheckpointArchiveIfEnabled(ctx, r.Client, chain.Spec.Namespace, pod.Name, container.Name, pod.Spec.NodeName, checkpointPath); err != nil {
+					log.Error(err, "failed to record checkpoint archive for external storage",
+						"pod", pod.Name, "container", container.Name)
+				}
+
 				record := criuorgv1.SnapshotChainRecord{
 					Index:          int32(len(chain.Status.SnapshotChainRecords) + len(newRecords)),
 					PodName:        pod.Name,

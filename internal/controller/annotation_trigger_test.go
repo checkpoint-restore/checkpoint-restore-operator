@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/go-logr/logr"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
@@ -72,6 +73,35 @@ var _ = Describe("AnnotationTrigger.run", func() {
 		trigger.run(context.Background())
 
 		Expect(mock.calls).To(BeEmpty())
+	})
+})
+
+var _ = Describe("AnnotationTrigger.run records checkpoint archives", func() {
+	It("creates a CheckpointArchive when the global policy opts in", func() {
+		Expect(v1.AddToScheme(scheme.Scheme)).To(Succeed())
+		resetAllPoliciesToDefault(logr.Discard())
+		DeferCleanup(func() { resetAllPoliciesToDefault(logr.Discard()) })
+		(&CheckpointRestoreOperatorReconciler{}).handleGlobalPolicies(logr.Discard(), &v1.GlobalPolicySpec{
+			UploadToExternalStorage: ptr(true),
+		})
+
+		mock := &mockCheckpointer{path: "/var/lib/kubelet/checkpoints/x.tar"}
+		pod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "pod-1", Namespace: "default",
+				Labels:      map[string]string{"app": "test"},
+				Annotations: map[string]string{CheckpointTriggerAnnotation: "true"},
+			},
+			Spec:   corev1.PodSpec{NodeName: "node-a", Containers: []corev1.Container{{Name: "app"}}},
+			Status: corev1.PodStatus{Phase: corev1.PodRunning},
+		}
+		trigger := makeAnnotationTrigger(mock, nil, pod)
+		trigger.run(context.Background())
+
+		var list v1.CheckpointArchiveList
+		Expect(trigger.client.List(context.Background(), &list)).To(Succeed())
+		Expect(list.Items).To(HaveLen(1))
+		Expect(list.Items[0].Spec.Node).To(Equal("node-a"))
 	})
 })
 

@@ -46,6 +46,7 @@ var _ = Describe("recordCheckpointArchiveIfEnabled", func() {
 	var c client.Client
 
 	BeforeEach(func() {
+		Expect(criuorgv1.AddToScheme(scheme.Scheme)).To(Succeed())
 		c = fake.NewClientBuilder().WithScheme(scheme.Scheme).Build()
 		resetAllPoliciesToDefault(logr.Discard())
 	})

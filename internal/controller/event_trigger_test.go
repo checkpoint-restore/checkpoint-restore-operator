@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/go-logr/logr"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
@@ -243,5 +244,28 @@ var _ = Describe("EventTrigger - failure retry", func() {
 		// drain handled; no further checkpoints while it persists
 		trigger.run(context.Background())
 		Expect(mock.calls).To(HaveLen(2))
+	})
+})
+
+var _ = Describe("EventTrigger - records checkpoint archives", func() {
+	It("creates a CheckpointArchive when the global policy opts in", func() {
+		Expect(v1.AddToScheme(scheme.Scheme)).To(Succeed())
+		resetAllPoliciesToDefault(logr.Discard())
+		DeferCleanup(func() { resetAllPoliciesToDefault(logr.Discard()) })
+		(&CheckpointRestoreOperatorReconciler{}).handleGlobalPolicies(logr.Discard(), &v1.GlobalPolicySpec{
+			UploadToExternalStorage: ptr(true),
+		})
+
+		mock := &mockCheckpointer{path: "/var/lib/kubelet/checkpoints/x.tar"}
+		node := testNode("node-1", true)
+		pod := testPod("pod-1", "node-1")
+		trigger := buildEventTrigger(mock, []string{EventNodeDrain}, []*corev1.Node{node}, pod)
+
+		trigger.run(context.Background())
+
+		var list v1.CheckpointArchiveList
+		Expect(trigger.client.List(context.Background(), &list)).To(Succeed())
+		Expect(list.Items).To(HaveLen(1))
+		Expect(list.Items[0].Spec.Node).To(Equal("node-1"))
 	})
 })

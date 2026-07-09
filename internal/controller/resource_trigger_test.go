@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-logr/logr"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
@@ -394,5 +395,39 @@ var _ = Describe("ResourceTrigger.run - selection and failure handling", func() 
 		trigger.run(context.Background())
 
 		Expect(mock.calls).To(HaveLen(1))
+	})
+})
+
+var _ = Describe("ResourceTrigger.run - records checkpoint archives", func() {
+	It("creates a CheckpointArchive when the global policy opts in", func() {
+		Expect(v1.AddToScheme(scheme.Scheme)).To(Succeed())
+		resetAllPoliciesToDefault(logr.Discard())
+		DeferCleanup(func() { resetAllPoliciesToDefault(logr.Discard()) })
+		(&CheckpointRestoreOperatorReconciler{}).handleGlobalPolicies(logr.Discard(), &v1.GlobalPolicySpec{
+			UploadToExternalStorage: ptr(true),
+		})
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(podMetricsResponse{
+				Containers: []containerMetricsItem{
+					{Name: "app", Usage: map[string]string{"memory": "420Mi"}},
+				},
+			})
+		}))
+		defer server.Close()
+
+		mock := &mockCheckpointer{path: "/var/lib/kubelet/checkpoints/x.tar"}
+		pod := runningPodWithLimits("pod-1", "500Mi", "")
+		threshold := &v1.ResourceThresholdSpec{
+			MemoryPercent: &v1.ResourcePercentThreshold{Upper: intPtr(80)},
+		}
+		trigger := buildResourceTrigger(mock, server.URL, threshold, pod)
+		trigger.run(context.Background())
+
+		var list v1.CheckpointArchiveList
+		Expect(trigger.client.List(context.Background(), &list)).To(Succeed())
+		Expect(list.Items).To(HaveLen(1))
+		Expect(list.Items[0].Spec.Node).To(Equal("node-1"))
 	})
 })
