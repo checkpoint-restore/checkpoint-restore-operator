@@ -71,7 +71,7 @@ type CheckpointArchiveStatus struct {
 	// +listMapKey=type
 	// +patchStrategy=merge
 	// +patchMergeKey=type
-	Conditions []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type"`
+	Conditions []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type" protobuf:"bytes,1,rep,name=conditions"`
 	// externalURI is the object storage location (e.g. s3://bucket/key.tar)
 	// once the checkpoint-syncer has uploaded the archive. Empty until then.
 	// +optional

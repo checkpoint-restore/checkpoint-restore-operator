@@ -67,9 +67,11 @@ type CheckpointRestoreOperatorSpec struct {
 type ExternalStorageSpec struct {
 	// backend selects the storage backend. Only "s3" is supported initially,
 	// but any S3-compatible endpoint (AWS, MinIO, etc.) works through it.
+	// +required
 	// +kubebuilder:validation:Enum=s3
 	Backend string `json:"backend"`
 	// bucket is the destination bucket for uploaded checkpoint archives.
+	// +required
 	Bucket string `json:"bucket"`
 	// endpoint overrides the default AWS endpoint, for S3-compatible providers.
 	// +optional
@@ -79,6 +81,7 @@ type ExternalStorageSpec struct {
 	Region string `json:"region,omitempty"`
 	// secretRef names a Secret (in the syncer's namespace) holding
 	// credentials (access key / secret key, or provider-specific fields).
+	// +required
 	SecretRef corev1.LocalObjectReference `json:"secretRef"`
 }
 
