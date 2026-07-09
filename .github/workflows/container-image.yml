@@ -23,10 +23,16 @@ concurrency:
 
 jobs:
   changes:
-    name: Detect image inputs
+    name: Detect workflow inputs
     runs-on: ubuntu-latest
     outputs:
-      images: ${{ steps.schedule.outputs.images || steps.filter.outputs.images }}
+      images: ${{ steps.schedule.outputs.images == 'true' || steps.filter.outputs.images == 'true' }}
+      registry_access: >-
+        ${{
+          steps.schedule.outputs.images == 'true' ||
+          steps.filter.outputs.images == 'true' ||
+          steps.filter.outputs.release == 'true'
+        }}
     steps:
       - name: Always build scheduled images
         if: github.event_name == 'schedule'
@@ -57,19 +63,21 @@ jobs:
               - 'Dockerfile'
               - 'Dockerfile.cri-proxy'
               - 'vendor/**'
+            release:
+              - 'VERSION'
 
   # Request push-scoped registry tokens and check that the granted
   # access includes push; nothing is pushed by this check. On push and
-  # schedule events this gates the image push below, so broken
-  # credentials fail fast instead of halfway through a multi-registry
-  # push. Pull requests from forks and from Dependabot run without the
-  # repository secrets and skip this check.
+  # schedule events this gates the image push below. On VERSION-only
+  # release pull requests it checks release credentials without
+  # triggering a latest image build. Pull requests from forks and from
+  # Dependabot run without the repository secrets and skip this check.
   verify-registry-access:
     name: Verify registry push access
     needs: changes
     if: >-
       github.repository == 'checkpoint-restore/checkpoint-restore-operator' &&
-      (github.event_name == 'schedule' || needs.changes.outputs.images == 'true') &&
+      (github.event_name == 'schedule' || needs.changes.outputs.registry_access == 'true') &&
       (github.event_name != 'pull_request' ||
        (github.event.pull_request.head.repo.full_name == github.repository &&
         github.actor != 'dependabot[bot]'))
