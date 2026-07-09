@@ -82,6 +82,7 @@ var (
 
 type garbageCollector struct {
 	sync.Mutex
+	Client client.Client
 }
 
 type policySnapshot struct {
@@ -274,6 +275,7 @@ func (r *CheckpointRestoreOperatorReconciler) applyPolicySpec(log logr.Logger, s
 }
 
 func (r *CheckpointRestoreOperatorReconciler) restartGarbageCollector() {
+	GarbageCollector.Client = r.Client
 	quit <- true
 	quit = make(chan bool)
 	go GarbageCollector.runGarbageCollector()
@@ -1228,6 +1230,7 @@ func (gc *garbageCollector) runGarbageCollector() {
 // SetupWithManager sets up the controller with the Manager.
 func (r *CheckpointRestoreOperatorReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	quit = make(chan bool)
+	GarbageCollector.Client = r.Client
 
 	go GarbageCollector.runGarbageCollector()
 

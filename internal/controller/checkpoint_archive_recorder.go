@@ -19,6 +19,8 @@ package controller
 import (
 	"context"
 
+	"github.com/go-logr/logr"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -60,4 +62,33 @@ func recordCheckpointArchiveIfEnabled(
 	log.FromContext(ctx).Info("recorded checkpoint archive for external storage sync",
 		"namespace", namespace, "pod", pod, "container", container, "node", node, "path", path)
 	return nil
+}
+
+// deleteCheckpointArchiveRecord mirrors the GC's deletion of a local
+// checkpoint file onto the CheckpointArchive tracking it, so external-storage
+// sync state does not outlive the file it describes. A no-op when the GC has
+// no client configured (e.g. SetupWithManager never ran) or no CheckpointArchive
+// matches the deleted path.
+func deleteCheckpointArchiveRecord(log logr.Logger, localPath string) {
+	c := GarbageCollector.Client
+	if c == nil {
+		return
+	}
+
+	ctx := context.Background()
+	var list criuorgv1.CheckpointArchiveList
+	if err := c.List(ctx, &list); err != nil {
+		log.Error(err, "failed to list checkpoint archives while mirroring local deletion", "localPath", localPath)
+		return
+	}
+
+	for i := range list.Items {
+		archive := &list.Items[i]
+		if archive.Spec.LocalPath != localPath {
+			continue
+		}
+		if err := c.Delete(ctx, archive); err != nil && !apierrors.IsNotFound(err) {
+			log.Error(err, "failed to delete checkpoint archive record", "localPath", localPath, "name", archive.Name)
+		}
+	}
 }
