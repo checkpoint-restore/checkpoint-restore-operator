@@ -17,6 +17,7 @@ limitations under the License.
 package v1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -52,6 +53,33 @@ type CheckpointRestoreOperatorSpec struct {
 	// +optional
 	// +listType=atomic
 	NamespacePolicies []NamespacePolicySpec `json:"namespacePolicies,omitempty"`
+	// externalStorage configures the S3-compatible backend that the
+	// checkpoint-syncer component uploads opted-in checkpoints to. Leaving
+	// this unset disables external storage entirely; it has no effect on
+	// local checkpoint creation, retention, or restore.
+	// +optional
+	ExternalStorage *ExternalStorageSpec `json:"externalStorage,omitempty"`
+}
+
+// ExternalStorageSpec configures the S3-compatible object storage backend
+// used by the checkpoint-syncer component. It is read only by the syncer -
+// the main controller-manager and cri-proxy never use these credentials.
+type ExternalStorageSpec struct {
+	// backend selects the storage backend. Only "s3" is supported initially,
+	// but any S3-compatible endpoint (AWS, MinIO, etc.) works through it.
+	// +kubebuilder:validation:Enum=s3
+	Backend string `json:"backend"`
+	// bucket is the destination bucket for uploaded checkpoint archives.
+	Bucket string `json:"bucket"`
+	// endpoint overrides the default AWS endpoint, for S3-compatible providers.
+	// +optional
+	Endpoint string `json:"endpoint,omitempty"`
+	// region is the bucket's region.
+	// +optional
+	Region string `json:"region,omitempty"`
+	// secretRef names a Secret (in the syncer's namespace) holding
+	// credentials (access key / secret key, or provider-specific fields).
+	SecretRef corev1.LocalObjectReference `json:"secretRef"`
 }
 
 type GlobalPolicySpec struct {

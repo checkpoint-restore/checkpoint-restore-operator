@@ -106,6 +106,52 @@ spec:
                   type: object
                 type: array
                 x-kubernetes-list-type: atomic
+              externalStorage:
+                description: |-
+                  externalStorage configures the S3-compatible backend that the
+                  checkpoint-syncer component uploads opted-in checkpoints to. Leaving
+                  this unset disables external storage entirely; it has no effect on
+                  local checkpoint creation, retention, or restore.
+                properties:
+                  backend:
+                    description: |-
+                      backend selects the storage backend. Only "s3" is supported initially,
+                      but any S3-compatible endpoint (AWS, MinIO, etc.) works through it.
+                    enum:
+                    - s3
+                    type: string
+                  bucket:
+                    description: bucket is the destination bucket for uploaded checkpoint
+                      archives.
+                    type: string
+                  endpoint:
+                    description: endpoint overrides the default AWS endpoint, for
+                      S3-compatible providers.
+                    type: string
+                  region:
+                    description: region is the bucket's region.
+                    type: string
+                  secretRef:
+                    description: |-
+                      secretRef names a Secret (in the syncer's namespace) holding
+                      credentials (access key / secret key, or provider-specific fields).
+                    properties:
+                      name:
+                        default: ""
+                        description: |-
+                          Name of the referent.
+                          This field is effectively required, but due to backwards compatibility is
+                          allowed to be empty. Instances of this type with an empty value here are
+                          almost certainly wrong.
+                          More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                        type: string
+                    type: object
+                    x-kubernetes-map-type: atomic
+                required:
+                - backend
+                - bucket
+                - secretRef
+                type: object
               globalPolicy:
                 description: |-
                   globalPolicy defines the retention limits applied to all checkpoints
