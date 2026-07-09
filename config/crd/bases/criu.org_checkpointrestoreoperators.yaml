@@ -97,6 +97,12 @@ spec:
                         retainOrphan controls whether checkpoints are kept after the container
                         no longer exists.
                       type: boolean
+                    uploadToExternalStorage:
+                      description: |-
+                        uploadToExternalStorage opts checkpoints matched by this policy into
+                        external storage sync, performed by the checkpoint-syncer component.
+                        Defaults to false: existing policies are unaffected until set.
+                      type: boolean
                   type: object
                 type: array
                 x-kubernetes-list-type: atomic
@@ -160,6 +166,12 @@ spec:
                       retainOrphan controls whether checkpoints are kept after their source
                       container, pod or namespace no longer exists.
                     type: boolean
+                  uploadToExternalStorage:
+                    description: |-
+                      uploadToExternalStorage opts checkpoints matched by this policy into
+                      external storage sync, performed by the checkpoint-syncer component.
+                      Defaults to false: existing policies are unaffected until set.
+                    type: boolean
                 type: object
               namespacePolicies:
                 description: |-
@@ -198,6 +210,12 @@ spec:
                       description: |-
                         retainOrphan controls whether checkpoints are kept after their source no
                         longer exists.
+                      type: boolean
+                    uploadToExternalStorage:
+                      description: |-
+                        uploadToExternalStorage opts checkpoints matched by this policy into
+                        external storage sync, performed by the checkpoint-syncer component.
+                        Defaults to false: existing policies are unaffected until set.
                       type: boolean
                   type: object
                 type: array
@@ -242,6 +260,12 @@ spec:
                       description: |-
                         retainOrphan controls whether checkpoints are kept after the pod no
                         longer exists.
+                      type: boolean
+                    uploadToExternalStorage:
+                      description: |-
+                        uploadToExternalStorage opts checkpoints matched by this policy into
+                        external storage sync, performed by the checkpoint-syncer component.
+                        Defaults to false: existing policies are unaffected until set.
                       type: boolean
                   type: object
                 type: array

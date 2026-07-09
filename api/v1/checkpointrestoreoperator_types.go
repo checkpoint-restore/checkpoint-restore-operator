@@ -86,6 +86,11 @@ type GlobalPolicySpec struct {
 	// retained per container.
 	// +optional
 	MaxTotalSizePerContainer *resource.Quantity `json:"maxTotalSizePerContainer,omitempty"`
+	// uploadToExternalStorage opts checkpoints matched by this policy into
+	// external storage sync, performed by the checkpoint-syncer component.
+	// Defaults to false: existing policies are unaffected until set.
+	// +optional
+	UploadToExternalStorage *bool `json:"uploadToExternalStorage,omitempty"`
 }
 
 type ContainerPolicySpec struct {
@@ -114,6 +119,11 @@ type ContainerPolicySpec struct {
 	// container.
 	// +optional
 	MaxTotalSize *resource.Quantity `json:"maxTotalSize,omitempty"`
+	// uploadToExternalStorage opts checkpoints matched by this policy into
+	// external storage sync, performed by the checkpoint-syncer component.
+	// Defaults to false: existing policies are unaffected until set.
+	// +optional
+	UploadToExternalStorage *bool `json:"uploadToExternalStorage,omitempty"`
 }
 
 type PodPolicySpec struct {
@@ -139,6 +149,11 @@ type PodPolicySpec struct {
 	// pod.
 	// +optional
 	MaxTotalSize *resource.Quantity `json:"maxTotalSize,omitempty"`
+	// uploadToExternalStorage opts checkpoints matched by this policy into
+	// external storage sync, performed by the checkpoint-syncer component.
+	// Defaults to false: existing policies are unaffected until set.
+	// +optional
+	UploadToExternalStorage *bool `json:"uploadToExternalStorage,omitempty"`
 }
 
 type NamespacePolicySpec struct {
@@ -161,6 +176,11 @@ type NamespacePolicySpec struct {
 	// namespace.
 	// +optional
 	MaxTotalSize *resource.Quantity `json:"maxTotalSize,omitempty"`
+	// uploadToExternalStorage opts checkpoints matched by this policy into
+	// external storage sync, performed by the checkpoint-syncer component.
+	// Defaults to false: existing policies are unaffected until set.
+	// +optional
+	UploadToExternalStorage *bool `json:"uploadToExternalStorage,omitempty"`
 }
 
 // CheckpointRestoreOperatorStatus defines the observed state of CheckpointRestoreOperator
