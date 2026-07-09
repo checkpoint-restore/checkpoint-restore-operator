@@ -12,6 +12,7 @@
 set -euo pipefail
 
 K8S_STREAM="$1"
+FLANNEL_VERSION="${FLANNEL_VERSION:-v0.28.7}"
 REGISTRY_PORT="${REGISTRY_PORT:-5000}"
 UBUNTU_CODENAME="$(
 	awk -F= '$1 == "VERSION_CODENAME" { print $2 }' /etc/os-release
@@ -77,7 +78,7 @@ sudo cp /etc/kubernetes/admin.conf "${HOME}/.kube/config"
 sudo chown "$(id -u):$(id -g)" "${HOME}/.kube/config"
 
 # Install a pod network and allow workloads on the control-plane node.
-kubectl apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
+kubectl apply -f "https://github.com/flannel-io/flannel/releases/download/${FLANNEL_VERSION}/kube-flannel.yml"
 kubectl taint nodes --all node-role.kubernetes.io/control-plane- || true
 
 kubectl wait --for=condition=Ready node --all --timeout=300s

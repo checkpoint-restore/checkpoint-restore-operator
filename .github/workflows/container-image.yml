@@ -12,6 +12,9 @@ on:
     # "At minute 15 past every 4th hour from midnight through 23."
     - cron: "15 0-23/4 * * *"
 
+permissions:
+  contents: read
+
 # Cancel any preceding run on the pull request.
 concurrency:
   group: container-image-${{ github.event.pull_request.number || github.ref }}

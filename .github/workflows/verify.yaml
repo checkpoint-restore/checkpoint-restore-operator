@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 # Cancel any preceding run on the pull request.
 concurrency:
   group: verify-${{ github.event.pull_request.number || github.ref }}
@@ -23,10 +26,11 @@ jobs:
         with:
           go-version-file: "go.mod"
 
-      - name: Install ShellCheck and shfmt
+      - name: Install ShellCheck, shfmt, and actionlint
         run: |
           sudo apt update
           sudo apt install -y shellcheck shfmt
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
 
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v9
@@ -43,10 +47,11 @@ jobs:
           skip: vendor,*.svg
           ignore_words_list: notin
 
-      - name: ShellCheck and shfmt
+      - name: ShellCheck, shfmt, and actionlint
         run: |
           shellcheck ./test/*.sh
           shfmt -d ./test/*.sh
+          actionlint .github/workflows/*.yml .github/workflows/*.yaml
 
   kube-api-linter:
     name: Lint Kubernetes API types
@@ -89,6 +94,7 @@ jobs:
     name: Lint markdown
     runs-on: ubuntu-latest
     permissions:
+      contents: read
       pull-requests: read
     steps:
       - uses: actions/checkout@v6
@@ -99,7 +105,7 @@ jobs:
           filters: |
             md:
               - 'README.md'
-              - '.github/workflows/verify.yml'
+              - '.github/workflows/verify.yaml'
 
       - name: Lint markdown
         if: steps.changes.outputs.md == 'true'
