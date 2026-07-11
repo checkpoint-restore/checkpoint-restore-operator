@@ -78,6 +78,37 @@ spec:
               integrity:
                 description: integrity defines integrity verification
                 properties:
+                  forensicSignature:
+                    description: forensicSignature defines how to sign the snapshotchain
+                      manifest
+                    properties:
+                      enabled:
+                        description: |-
+                          Does manifest generation & detached GPG signing at snapshotchain completion
+                          Requires integrity to be enabled
+                        type: boolean
+                      secretKey:
+                        description: |-
+                          secretKey is the Secret data key for the GPG private key
+                          Defaults to "signing-key"
+                        type: string
+                      secretRef:
+                        description: |-
+                          this names the Secret in operator namespace that contains the GPG private key
+                          Defaults to "forensic-signing-key" when enabled and unset
+                        properties:
+                          name:
+                            default: ""
+                            description: |-
+                              Name of the referent.
+                              This field is effectively required, but due to backwards compatibility is
+                              allowed to be empty. Instances of this type with an empty value here are
+                              almost certainly wrong.
+                              More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                            type: string
+                        type: object
+                        x-kubernetes-map-type: atomic
+                    type: object
                   hashAlgorithm:
                     description: hashAlgorithm defines the hash algorithm used to
                       verify integrity
@@ -239,6 +270,19 @@ spec:
                 description: lastSnapshotTime is when the most recent capture round
                   ran.
                 format: date-time
+                type: string
+              manifest:
+                description: |-
+                  manifest is the generated snapshotchain manifest yaml after completion
+                  Verifiers must use exact bytes.
+                type: string
+              manifestSignature:
+                description: manifestSignature is the detached GPG signature of the
+                  manifest
+                type: string
+              manifestSignatureKeyID:
+                description: manifestSignatureKeyID is the key ID of the GPG key used
+                  to sign the manifest
                 type: string
               observedGeneration:
                 description: observedGeneration is the most recent generation observed
