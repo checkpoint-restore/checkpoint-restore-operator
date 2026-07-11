@@ -140,6 +140,43 @@ spec:
                     type: object
                 type: object
                 x-kubernetes-map-type: atomic
+              volumeSnapshots:
+                description: |-
+                  volumeSnapshots optionally enables CSI VolumeSnapshot capture of the
+                  selected container's PVCs alongside each checkpoint round. When nil or
+                  disabled, no volume snapshots are taken and behavior is unchanged.
+                properties:
+                  enabled:
+                    description: enabled turns on volume snapshotting for this checkpoint
+                      producer.
+                    type: boolean
+                  failurePolicy:
+                    default: BestEffort
+                    description: |-
+                      failurePolicy selects how a snapshot failure is handled: BestEffort
+                      (default) proceeds with the checkpoint and records the failure; Require
+                      aborts the round before the checkpoint call.
+                    enum:
+                    - BestEffort
+                    - Require
+                    type: string
+                  readyTimeout:
+                    description: |-
+                      readyTimeout is how long to wait for a created VolumeSnapshot to become
+                      readyToUse before moving on. Defaults to 60s.
+                    type: string
+                    x-kubernetes-validations:
+                    - message: readyTimeout must be at least 1s
+                      rule: duration(self) >= duration('1s')
+                  volumeSnapshotClassName:
+                    description: |-
+                      volumeSnapshotClassName optionally overrides the VolumeSnapshotClass used
+                      for the snapshots. When empty, the CSI driver's default
+                      VolumeSnapshotClass is used.
+                    type: string
+                required:
+                - enabled
+                type: object
             required:
             - capture
             - namespace
@@ -289,6 +326,50 @@ spec:
                         captured.
                       format: date-time
                       type: string
+                    volumeSnapshots:
+                      description: |-
+                        volumeSnapshots records the CSI VolumeSnapshots captured alongside this
+                        checkpoint round, empty when volume snapshotting is disabled.
+                      items:
+                        description: |-
+                          VolumeSnapshotRef records one VolumeSnapshot captured alongside a checkpoint
+                          archive, so a later restore can provision a PVC from it.
+                        properties:
+                          driver:
+                            description: driver is the CSI driver that backs the snapshot,
+                              when known.
+                            type: string
+                          error:
+                            description: error holds the snapshot failure message
+                              under BestEffort, if any.
+                            type: string
+                          mountPath:
+                            description: mountPath is where the volume was mounted
+                              in the checkpointed container.
+                            type: string
+                          pvc:
+                            description: pvc is the name of the source PersistentVolumeClaim.
+                            type: string
+                          readyToUse:
+                            description: |-
+                              readyToUse reports whether the snapshot reached readyToUse before the
+                              round completed. A false value under BestEffort still records the
+                              reference so a restore can wait on it.
+                            type: boolean
+                          snapshotName:
+                            description: snapshotName is the name of the created VolumeSnapshot
+                              object.
+                            type: string
+                          volumeName:
+                            description: volumeName is the pod-template volume name
+                              that referenced the PVC.
+                            type: string
+                        required:
+                        - pvc
+                        - snapshotName
+                        type: object
+                      type: array
+                      x-kubernetes-list-type: atomic
                   required:
                   - checkpointPath
                   - containerName
