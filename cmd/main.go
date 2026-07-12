@@ -163,10 +163,11 @@ func main() {
 		os.Exit(1)
 	}
 	if err := (&controller.ForensicSnapshotChainReconciler{
-		Client:     mgr.GetClient(),
-		Scheme:     mgr.GetScheme(),
-		RestConfig: mgr.GetConfig(),
-		ClientSet:  clientset,
+		Client:                 mgr.GetClient(),
+		Scheme:                 mgr.GetScheme(),
+		RestConfig:             mgr.GetConfig(),
+		ClientSet:              clientset,
+		SigningSecretNamespace: os.Getenv("POD_NAMESPACE"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "forensicsnapshotchain")
 		os.Exit(1)
