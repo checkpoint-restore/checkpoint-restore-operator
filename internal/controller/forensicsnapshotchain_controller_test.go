@@ -668,6 +668,78 @@ var _ = Describe("ForensicSnapshotChainReconciler", func() {
 		Expect(meta.FindStatusCondition(updated.Status.Conditions, "IntegrityVerified")).To(BeNil())
 	})
 
+	// --- Manifest signing ---
+	It("fails the chain when forensicSignature is enabled without sha256", func() {
+		chain := runningChain()
+		chain.Spec.Integrity = criuorgv1.IntegritySpec{
+			HashAlgorithm: "",
+			ForensicSignature: &criuorgv1.ForensicSignatureSpec{
+				Enabled: true,
+			},
+		}
+		mock := &mockCheckpointer{}
+		r := makeRunningReconciler(chain, mock)
+
+		_, err := r.Reconcile(context.Background(), request)
+		Expect(err).To(HaveOccurred())
+
+		updated := &criuorgv1.ForensicSnapshotChain{}
+		Expect(r.Get(context.Background(), request.NamespacedName, updated)).To(Succeed())
+		Expect(updated.Status.Phase).To(Equal(criuorgv1.PhaseFailed))
+		Expect(updated.Status.ErrorMessage).To(ContainSubstring("sha256"))
+		Expect(mock.calls).To(BeEmpty())
+	})
+
+	It("signs the manifest on completion when forensicSignature is enabled", func() {
+		keyBytes, _ := newTestSigningKey()
+
+		secret := makeSigningSecret(defaultSigningSecretName, defaultSigningSecretKey, keyBytes)
+
+		chain := runningChain()
+		completion := metav1.Now()
+		chain.Status.Phase = criuorgv1.PhaseCompleted
+		chain.Status.CompletionTime = &completion
+		chain.Status.SnapshotCount = 1
+		chain.Status.SnapshotChainRecords = []criuorgv1.SnapshotChainRecord{{
+			Index:          0,
+			PodName:        "pod-a",
+			ContainerName:  "c1",
+			CheckpointPath: "/var/lib/kubelet/checkpoints/foo.tar",
+			SnapshotTime:   completion,
+			SHA256Hash:     "abc123",
+		}}
+		max := int32(1)
+		chain.Spec.Capture.MaxSnapshots = &max
+		chain.Spec.Integrity = criuorgv1.IntegritySpec{
+			HashAlgorithm:     "sha256",
+			ForensicSignature: &criuorgv1.ForensicSignatureSpec{Enabled: true},
+		}
+		Expect(criuorgv1.AddToScheme(scheme.Scheme)).To(Succeed())
+		c := fake.NewClientBuilder().
+			WithScheme(scheme.Scheme).
+			WithObjects(chain, secret).
+			WithStatusSubresource(chain).
+			Build()
+
+		r := &ForensicSnapshotChainReconciler{
+			Client:                 c,
+			Scheme:                 scheme.Scheme,
+			SigningSecretNamespace: "operator-ns",
+		}
+		Expect(r.updateChainStatus(context.Background(), chain, func(latest *criuorgv1.ForensicSnapshotChain) {
+			r.applyManifestSigning(context.Background(), latest)
+		})).To(Succeed())
+		updated := &criuorgv1.ForensicSnapshotChain{}
+		Expect(r.Get(context.Background(), request.NamespacedName, updated)).To(Succeed())
+		Expect(updated.Status.Manifest).NotTo(BeEmpty())
+		Expect(updated.Status.ManifestSignature).NotTo(BeEmpty())
+		Expect(updated.Status.ManifestSignatureKeyID).NotTo(BeEmpty())
+		cond := meta.FindStatusCondition(updated.Status.Conditions, "SignatureVerified")
+		Expect(cond).NotTo(BeNil())
+		Expect(cond.Status).To(Equal(metav1.ConditionTrue))
+		Expect(cond.Reason).To(Equal("SigningSucceeded"))
+	})
+
 })
 
 func runningPod(name string, labels map[string]string, containers ...string) *corev1.Pod {
