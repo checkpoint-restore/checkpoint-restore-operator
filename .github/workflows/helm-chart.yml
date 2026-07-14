@@ -36,10 +36,16 @@ jobs:
             chart:
               - '.github/workflows/helm-chart.yml'
               - '.github/workflows/release.yml'
+              - 'Makefile'
               - 'VERSION'
+              - 'api/**'
               - 'charts/checkpoint-restore-operator/**'
               - 'config/crd/bases/**'
               - 'config/rbac/role.yaml'
+              - 'go.mod'
+              - 'go.sum'
+              - 'hack/boilerplate.go.txt'
+              - 'internal/controller/**'
 
   validate:
     name: Validate Helm chart
@@ -49,11 +55,21 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: "go.mod"
+
       - name: Set up Helm
         uses: azure/setup-helm@v4
 
-      # The chart vendors the generated CRDs; make manifests only
-      # regenerates config/crd/bases, so fail when the copies drift.
+      - name: Verify generated API artifacts
+        run: |
+          make generate-all
+          git diff --exit-code
+          test -z "$(git ls-files --others --exclude-standard)"
+
+      # Compare CRD directories recursively to detect unexpected files.
       - name: Verify chart CRDs match generated CRDs
         run: diff -r -u config/crd/bases charts/checkpoint-restore-operator/crds
 
