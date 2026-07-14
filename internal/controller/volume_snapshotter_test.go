@@ -212,3 +212,112 @@ var _ = Describe("snapshotVolumes", func() {
 		Expect(refs).To(BeEmpty())
 	})
 })
+
+var _ = Describe("captureVolumeSnapshots", func() {
+	var (
+		ctx      context.Context
+		pod      *corev1.Pod
+		origPoll time.Duration
+	)
+
+	BeforeEach(func() {
+		ctx = context.Background()
+		origPoll = snapshotReadyPollInterval
+		snapshotReadyPollInterval = 5 * time.Millisecond
+		pod = &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: "app-0", Namespace: "default"},
+			Spec: corev1.PodSpec{
+				NodeName: "node-a",
+				Volumes: []corev1.Volume{{
+					Name: "data",
+					VolumeSource: corev1.VolumeSource{
+						PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "data-pvc"},
+					},
+				}},
+				Containers: []corev1.Container{{
+					Name:         "app",
+					VolumeMounts: []corev1.VolumeMount{{Name: "data", MountPath: "/data"}},
+				}},
+			},
+		}
+	})
+
+	AfterEach(func() { snapshotReadyPollInterval = origPoll })
+
+	It("is a no-op that proceeds when cfg is nil", func() {
+		c := makeVolumeSnapshotClient()
+		refs, proceed := captureVolumeSnapshots(ctx, c, nil, pod, []string{"app"})
+		Expect(proceed).To(BeTrue())
+		Expect(refs).To(BeNil())
+	})
+
+	It("is a no-op that proceeds when cfg is disabled", func() {
+		c := makeVolumeSnapshotClient()
+		cfg := &criuorgv1.VolumeSnapshotConfig{Enabled: false}
+		refs, proceed := captureVolumeSnapshots(ctx, c, cfg, pod, []string{"app"})
+		Expect(proceed).To(BeTrue())
+		Expect(refs).To(BeNil())
+	})
+
+	It("creates a snapshot and proceeds under BestEffort", func() {
+		c := makeVolumeSnapshotClient()
+		cfg := &criuorgv1.VolumeSnapshotConfig{
+			Enabled:       true,
+			FailurePolicy: criuorgv1.FailurePolicyBestEffort,
+			ReadyTimeout:  &metav1.Duration{Duration: 20 * time.Millisecond},
+		}
+		refs, proceed := captureVolumeSnapshots(ctx, c, cfg, pod, []string{"app"})
+		Expect(proceed).To(BeTrue())
+		Expect(refs).To(HaveLen(1))
+		Expect(refs[0].PVC).To(Equal("data-pvc"))
+		Expect(refs[0].SnapshotName).NotTo(BeEmpty())
+	})
+
+	It("does not proceed under Require when the snapshot cannot be created", func() {
+		c := &snapshotRejectingClient{Client: makeVolumeSnapshotClient()}
+		cfg := &criuorgv1.VolumeSnapshotConfig{
+			Enabled:       true,
+			FailurePolicy: criuorgv1.FailurePolicyRequire,
+		}
+		_, proceed := captureVolumeSnapshots(ctx, c, cfg, pod, []string{"app"})
+		Expect(proceed).To(BeFalse())
+	})
+})
+
+var _ = Describe("linkSnapshotsToArchive", func() {
+	ctx := context.Background()
+
+	It("stamps the archive basename onto each snapshot", func() {
+		c := makeVolumeSnapshotClient()
+		// Create a snapshot to link.
+		name, err := createVolumeSnapshot(ctx, c, "default", "data-pvc", "", map[string]string{
+			criuorgv1.LabelPod: "app-0",
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		refs := []criuorgv1.VolumeSnapshotRef{{PVC: "data-pvc", SnapshotName: name}}
+		linkSnapshotsToArchive(ctx, c, "default",
+			refs, "/var/lib/kubelet/checkpoints/checkpoint-app-0_default-app-2026.tar")
+
+		snap := &unstructured.Unstructured{}
+		snap.SetGroupVersionKind(volumeSnapshotGVK)
+		Expect(c.Get(ctx, client.ObjectKey{Namespace: "default", Name: name}, snap)).To(Succeed())
+		Expect(snap.GetLabels()).To(HaveKeyWithValue(
+			criuorgv1.LabelCheckpointArchive,
+			"checkpoint-app-0_default-app-2026.tar"))
+	})
+
+	It("does nothing when the archive path is empty", func() {
+		c := makeVolumeSnapshotClient()
+		name, err := createVolumeSnapshot(ctx, c, "default", "data-pvc", "", nil)
+		Expect(err).NotTo(HaveOccurred())
+
+		refs := []criuorgv1.VolumeSnapshotRef{{PVC: "data-pvc", SnapshotName: name}}
+		linkSnapshotsToArchive(ctx, c, "default", refs, "")
+
+		snap := &unstructured.Unstructured{}
+		snap.SetGroupVersionKind(volumeSnapshotGVK)
+		Expect(c.Get(ctx, client.ObjectKey{Namespace: "default", Name: name}, snap)).To(Succeed())
+		Expect(snap.GetLabels()).NotTo(HaveKey(criuorgv1.LabelCheckpointArchive))
+	})
+})

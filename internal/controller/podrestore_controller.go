@@ -31,7 +31,9 @@ import (
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -87,6 +89,8 @@ type PodRestoreReconciler struct {
 // +kubebuilder:rbac:groups=criu.org,resources=podrestores/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;create;delete
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch;create
+// +kubebuilder:rbac:groups=snapshot.storage.k8s.io,resources=volumesnapshots,verbs=get;list;watch
 
 // Reconcile drives a PodRestore. It is level-based: it re-derives the restore's
 // state from the world (spec, target node, source archives, and the restore Pod)
@@ -191,7 +195,17 @@ func (r *PodRestoreReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 			setReady(pr, metav1.ConditionFalse, "PodMissing", "restore Pod disappeared")
 			return r.saveStatus(ctx, pr, before, ctrl.Result{})
 		}
-		newPod, rerr := r.renderPod(logger, pr)
+		// Re-provision any volumes from their VolumeSnapshots before the Pod is
+		// created, so the Pod binds to PVCs holding the checkpoint-time content.
+		renamedPVCs, perr := r.ensureVolumePVCs(ctx, logger, pr)
+		if perr != nil {
+			logger.Error(perr, "failed to provision restore PVCs")
+			setReady(pr, metav1.ConditionFalse, "VolumeRestoreFailed", perr.Error())
+			// The snapshot may not be readyToUse yet; no watch fires for that, poll.
+			return r.saveStatus(ctx, pr, before, ctrl.Result{RequeueAfter: 10 * time.Second})
+		}
+
+		newPod, rerr := r.renderPod(logger, pr, renamedPVCs)
 		if rerr != nil {
 			logger.Error(rerr, "failed to render restore Pod")
 			setReady(pr, metav1.ConditionFalse, "RenderFailed", rerr.Error())
@@ -273,13 +287,30 @@ func (r *PodRestoreReconciler) validateSpec(pr *criuorgv1.PodRestore) error {
 			return fmt.Errorf("container %q is not defined in the Pod template", cp.Container)
 		}
 	}
+
+	// Each volumeRestore must name a PVC-backed volume in the template.
+	pvcVolumes := make(map[string]bool, len(pr.Spec.Template.Spec.Volumes))
+	for _, v := range pr.Spec.Template.Spec.Volumes {
+		if v.PersistentVolumeClaim != nil {
+			pvcVolumes[v.Name] = true
+		}
+	}
+	for _, vr := range pr.Spec.VolumeRestores {
+		if !pvcVolumes[vr.PVC] {
+			return fmt.Errorf("volumeRestore %q does not name a PVC-backed volume in the Pod template", vr.PVC)
+		}
+	}
 	return nil
 }
 
 // renderPod builds the restore Pod from the template, pinning it to the target
 // node, annotating each restored container with its checkpoint path, and filling
 // in the base image from the checkpoint when the template leaves it empty.
-func (r *PodRestoreReconciler) renderPod(logger logr.Logger, pr *criuorgv1.PodRestore) (*corev1.Pod, error) {
+//
+// renamedPVCs maps a template volume name to the freshly-provisioned PVC
+// (restored from a VolumeSnapshot) that should back it, so the restored
+// container's open files resolve to the checkpoint-time content.
+func (r *PodRestoreReconciler) renderPod(logger logr.Logger, pr *criuorgv1.PodRestore, renamedPVCs map[string]string) (*corev1.Pod, error) {
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Annotations: copyStringMap(pr.Spec.Template.Annotations),
@@ -290,6 +321,17 @@ func (r *PodRestoreReconciler) renderPod(logger logr.Logger, pr *criuorgv1.PodRe
 	pod.Name = pr.Name
 	pod.Namespace = pr.Namespace
 	pod.Spec.NodeName = pr.Spec.TargetNode
+
+	// Repoint volumes whose PVCs were re-provisioned from a snapshot.
+	for i := range pod.Spec.Volumes {
+		v := &pod.Spec.Volumes[i]
+		if v.PersistentVolumeClaim == nil {
+			continue
+		}
+		if newName, ok := renamedPVCs[v.Name]; ok {
+			v.PersistentVolumeClaim.ClaimName = newName
+		}
+	}
 
 	if pod.Annotations == nil {
 		pod.Annotations = map[string]string{}
@@ -323,6 +365,128 @@ func (r *PodRestoreReconciler) renderPod(logger logr.Logger, pr *criuorgv1.PodRe
 		return nil, err
 	}
 	return pod, nil
+}
+
+// ensureVolumePVCs provisions a new PersistentVolumeClaim from a VolumeSnapshot
+// for each entry in spec.volumeRestores and returns a map from template volume
+// name to the new PVC name. It is idempotent: an already-provisioned PVC is left
+// as-is, so re-reconciles after a render/create failure do not duplicate PVCs.
+// Each new PVC is named "<podrestore>-<volume>", deterministic so a retry finds
+// the same object.
+func (r *PodRestoreReconciler) ensureVolumePVCs(
+	ctx context.Context,
+	logger logr.Logger,
+	pr *criuorgv1.PodRestore,
+) (map[string]string, error) {
+	if len(pr.Spec.VolumeRestores) == 0 {
+		return nil, nil
+	}
+
+	volumes := make(map[string]corev1.Volume, len(pr.Spec.Template.Spec.Volumes))
+	for _, v := range pr.Spec.Template.Spec.Volumes {
+		volumes[v.Name] = v
+	}
+
+	renamed := make(map[string]string, len(pr.Spec.VolumeRestores))
+	for _, vr := range pr.Spec.VolumeRestores {
+		vol, ok := volumes[vr.PVC]
+		if !ok || vol.PersistentVolumeClaim == nil {
+			return nil, fmt.Errorf("volumeRestore %q: no PVC-backed template volume named %q", vr.PVC, vr.PVC)
+		}
+		newName := fmt.Sprintf("%s-%s", pr.Name, vr.PVC)
+		if err := r.ensurePVCFromSnapshot(ctx, logger, pr.Namespace, newName, vr.FromSnapshot); err != nil {
+			return nil, fmt.Errorf("volumeRestore %q: %w", vr.PVC, err)
+		}
+		renamed[vr.PVC] = newName
+	}
+	return renamed, nil
+}
+
+// ensurePVCFromSnapshot creates pvcName in namespace with the given
+// VolumeSnapshot as its data source, unless it already exists. The new PVC's
+// storage class and access modes are copied from the snapshot's source PVC when
+// that PVC still exists; otherwise the cluster default storage class and
+// ReadWriteOnce are used. The size is taken from the snapshot's restoreSize,
+// falling back to the source PVC's request.
+func (r *PodRestoreReconciler) ensurePVCFromSnapshot(
+	ctx context.Context,
+	logger logr.Logger,
+	namespace, pvcName, snapshotName string,
+) error {
+	// Idempotency: an existing PVC (from a previous reconcile) is authoritative.
+	existing := &corev1.PersistentVolumeClaim{}
+	err := r.Get(ctx, client.ObjectKey{Namespace: namespace, Name: pvcName}, existing)
+	if err == nil {
+		return nil
+	}
+	if !apierrors.IsNotFound(err) {
+		return err
+	}
+
+	// Read the snapshot to learn its restore size and source PVC.
+	snap := &unstructured.Unstructured{}
+	snap.SetGroupVersionKind(volumeSnapshotGVK)
+	if err := r.Get(ctx, client.ObjectKey{Namespace: namespace, Name: snapshotName}, snap); err != nil {
+		return fmt.Errorf("get VolumeSnapshot %q: %w", snapshotName, err)
+	}
+	ready, _, _ := unstructured.NestedBool(snap.Object, "status", "readyToUse")
+	if !ready {
+		return fmt.Errorf("VolumeSnapshot %q is not readyToUse yet", snapshotName)
+	}
+	restoreSize, _, _ := unstructured.NestedString(snap.Object, "status", "restoreSize")
+	sourcePVCName, _, _ := unstructured.NestedString(snap.Object, "spec", "source", "persistentVolumeClaimName")
+
+	var storageClass *string
+	accessModes := []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce}
+	var size resource.Quantity
+
+	if sourcePVCName != "" {
+		src := &corev1.PersistentVolumeClaim{}
+		if err := r.Get(ctx, client.ObjectKey{Namespace: namespace, Name: sourcePVCName}, src); err == nil {
+			storageClass = src.Spec.StorageClassName
+			if len(src.Spec.AccessModes) > 0 {
+				accessModes = src.Spec.AccessModes
+			}
+			if q, ok := src.Spec.Resources.Requests[corev1.ResourceStorage]; ok {
+				size = q
+			}
+		} else if !apierrors.IsNotFound(err) {
+			return err
+		}
+	}
+
+	// Prefer the snapshot's own recorded restore size when available.
+	if restoreSize != "" {
+		if q, perr := resource.ParseQuantity(restoreSize); perr == nil {
+			size = q
+		}
+	}
+	if size.IsZero() {
+		return fmt.Errorf("cannot determine size for PVC %q: snapshot %q has no restoreSize and source PVC %q is unavailable",
+			pvcName, snapshotName, sourcePVCName)
+	}
+
+	snapshotAPIGroup := volumeSnapshotGVK.Group
+	pvc := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{Name: pvcName, Namespace: namespace},
+		Spec: corev1.PersistentVolumeClaimSpec{
+			AccessModes:      accessModes,
+			StorageClassName: storageClass,
+			Resources: corev1.VolumeResourceRequirements{
+				Requests: corev1.ResourceList{corev1.ResourceStorage: size},
+			},
+			DataSource: &corev1.TypedLocalObjectReference{
+				APIGroup: &snapshotAPIGroup,
+				Kind:     volumeSnapshotGVK.Kind,
+				Name:     snapshotName,
+			},
+		},
+	}
+	if err := r.Create(ctx, pvc); err != nil && !apierrors.IsAlreadyExists(err) {
+		return fmt.Errorf("create PVC %q from snapshot %q: %w", pvcName, snapshotName, err)
+	}
+	logger.Info("provisioned restore PVC from snapshot", "pvc", pvcName, "snapshot", snapshotName, "size", size.String())
+	return nil
 }
 
 func copyStringMap(in map[string]string) map[string]string {

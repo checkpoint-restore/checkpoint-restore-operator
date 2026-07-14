@@ -296,7 +296,22 @@ func (r *ForensicSnapshotChainReconciler) Reconcile(ctx context.Context, req ctr
 		}
 
 		for _, pod := range pods {
-			for _, container := range filterContainers(pod, chain.Spec.ContainerNames) {
+			selectedContainers := filterContainers(pod, chain.Spec.ContainerNames)
+
+			// Snapshot the pod's volumes once, before checkpointing any of its
+			// containers, so every archive in this round for the pod is paired
+			// with the same disk state. Under Require, a snapshot failure skips
+			// the pod's checkpoints this round.
+			containerNames := make([]string, 0, len(selectedContainers))
+			for _, c := range selectedContainers {
+				containerNames = append(containerNames, c.Name)
+			}
+			snapRefs, proceed := captureVolumeSnapshots(ctx, r.Client, chain.Spec.VolumeSnapshots, &pod, containerNames)
+			if !proceed {
+				continue
+			}
+
+			for _, container := range selectedContainers {
 				checkpointPath, err := creator.createCheckpoint(
 					ctx,
 					chain.Spec.Namespace,
@@ -362,11 +377,12 @@ func (r *ForensicSnapshotChainReconciler) Reconcile(ctx context.Context, req ctr
 				captured++
 
 				record := criuorgv1.SnapshotChainRecord{
-					Index:          int32(len(chain.Status.SnapshotChainRecords) + len(newRecords)),
-					PodName:        pod.Name,
-					ContainerName:  container.Name,
-					SnapshotTime:   metav1.Now(),
-					CheckpointPath: checkpointPath,
+					Index:           int32(len(chain.Status.SnapshotChainRecords) + len(newRecords)),
+					PodName:         pod.Name,
+					ContainerName:   container.Name,
+					SnapshotTime:    metav1.Now(),
+					CheckpointPath:  checkpointPath,
+					VolumeSnapshots: snapRefs,
 				}
 				if hashingEnabled {
 					hash, hashErr := computeChecksum(ctx, r.Client, r.ClientSet, chain.Spec.Namespace, pod.Spec.NodeName, checkpointPath)

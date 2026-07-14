@@ -18,6 +18,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -29,6 +30,11 @@ import (
 
 	criuorgv1 "github.com/checkpoint-restore/checkpoint-restore-operator/api/v1"
 )
+
+// The operator creates and deletes CSI VolumeSnapshots for checkpointed PVCs
+// and reads VolumeSnapshotClasses to select one.
+//+kubebuilder:rbac:groups=snapshot.storage.k8s.io,resources=volumesnapshots,verbs=get;list;watch;create;delete
+//+kubebuilder:rbac:groups=snapshot.storage.k8s.io,resources=volumesnapshotclasses,verbs=get;list;watch
 
 // volumeSnapshotGVK identifies the CSI external-snapshotter VolumeSnapshot
 // resource. The operator addresses it as an unstructured object so it does not
@@ -183,6 +189,92 @@ func snapshotVolumes(
 		refs = append(refs, ref)
 	}
 	return refs, nil
+}
+
+// captureVolumeSnapshots snapshots the PVC-backed volumes mounted by
+// containerNames of pod immediately before their checkpoint, when cfg opts in.
+// It is the single entry point every checkpoint trigger (schedule, annotation,
+// event, resource-pressure, forensic chain) routes through, so snapshot behavior
+// is identical everywhere.
+//
+// It returns the created references and whether the caller should proceed with
+// the checkpoint(s): proceed is false only when a snapshot failed under
+// FailurePolicyRequire, in which case no checkpoint should be produced for the
+// pod so an archive never exists without its volume snapshots. When cfg is nil
+// or disabled it is a no-op that returns (nil, true).
+func captureVolumeSnapshots(
+	ctx context.Context,
+	c client.Client,
+	cfg *criuorgv1.VolumeSnapshotConfig,
+	pod *corev1.Pod,
+	containerNames []string,
+) ([]criuorgv1.VolumeSnapshotRef, bool) {
+	if cfg == nil || !cfg.Enabled {
+		return nil, true
+	}
+	logger := log.FromContext(ctx)
+
+	ident := checkpointIdentity{Node: pod.Spec.NodeName, Pod: pod.Name}
+	if len(containerNames) > 0 {
+		ident.Container = containerNames[0]
+	}
+
+	refs, err := snapshotVolumes(ctx, c, pod, containerNames, cfg, ident)
+	if err != nil {
+		// Only returned under FailurePolicyRequire; skip the pod's checkpoints.
+		logger.Error(err, "volume snapshot failed; skipping checkpoint for pod", "pod", pod.Name)
+		return refs, false
+	}
+	for _, r := range refs {
+		logger.Info("captured volume snapshot",
+			"pod", pod.Name, "pvc", r.PVC, "snapshot", r.SnapshotName,
+			"readyToUse", r.ReadyToUse, "error", r.Error)
+	}
+	return refs, true
+}
+
+// linkSnapshotsToArchive stamps the checkpoint archive basename onto each
+// snapshot in refs, completing the link from a VolumeSnapshot back to the
+// archive it was captured alongside. The archive name is known only after the
+// checkpoint call returns, so this runs after createCheckpoint. It is
+// best-effort: a labelling failure is logged but never fails the checkpoint,
+// since the node/pod/container labels already provide a usable link.
+func linkSnapshotsToArchive(
+	ctx context.Context,
+	c client.Client,
+	namespace string,
+	refs []criuorgv1.VolumeSnapshotRef,
+	archivePath string,
+) {
+	if archivePath == "" || len(refs) == 0 {
+		return
+	}
+	logger := log.FromContext(ctx)
+	archive := filepath.Base(archivePath)
+
+	for _, r := range refs {
+		if r.SnapshotName == "" {
+			continue
+		}
+		snap := &unstructured.Unstructured{}
+		snap.SetGroupVersionKind(volumeSnapshotGVK)
+		if err := c.Get(ctx, client.ObjectKey{Namespace: namespace, Name: r.SnapshotName}, snap); err != nil {
+			logger.Error(err, "linking snapshot to archive: get failed", "snapshot", r.SnapshotName)
+			continue
+		}
+		labels := snap.GetLabels()
+		if labels == nil {
+			labels = map[string]string{}
+		}
+		if labels[criuorgv1.LabelCheckpointArchive] == archive {
+			continue
+		}
+		labels[criuorgv1.LabelCheckpointArchive] = archive
+		snap.SetLabels(labels)
+		if err := c.Update(ctx, snap); err != nil {
+			logger.Error(err, "linking snapshot to archive: update failed", "snapshot", r.SnapshotName, "archive", archive)
+		}
+	}
 }
 
 // createVolumeSnapshot creates a VolumeSnapshot for claimName in namespace using
