@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -265,7 +266,9 @@ func (r *PodRestoreReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 // today's behavior for restores that don't use external storage. A
 // checkpoint whose CheckpointArchive names a different origin node is ready
 // only once the checkpoint-syncer has staged a local copy on TargetNode and
-// reported it via the LocalAvailable condition.
+// recorded it in Status.AvailableNodes. While waiting, TargetNode is appended
+// to the archive's Spec.RequestedNodes (once it has been uploaded) so the
+// syncer knows to stage it there.
 func (r *PodRestoreReconciler) checkpointsReadyOnTargetNode(ctx context.Context, pr *criuorgv1.PodRestore) (bool, error) {
 	var archives criuorgv1.CheckpointArchiveList
 	if err := r.List(ctx, &archives); err != nil {
@@ -278,16 +281,28 @@ func (r *PodRestoreReconciler) checkpointsReadyOnTargetNode(ctx context.Context,
 		byPath[archive.Spec.LocalPath] = archive
 	}
 
+	ready := true
 	for _, cp := range pr.Spec.Checkpoints {
 		archive, tracked := byPath[cp.Path]
 		if !tracked || archive.Spec.Node == pr.Spec.TargetNode {
 			continue
 		}
-		if !meta.IsStatusConditionTrue(archive.Status.Conditions, criuorgv1.ConditionArchiveLocalAvailable) {
-			return false, nil
+		if slices.Contains(archive.Status.AvailableNodes, pr.Spec.TargetNode) {
+			continue
+		}
+		// Not staged yet: request it (idempotent) if it has been uploaded, and
+		// report not-ready so the caller keeps waiting.
+		ready = false
+		if meta.IsStatusConditionTrue(archive.Status.Conditions, criuorgv1.ConditionArchiveUploaded) &&
+			!slices.Contains(archive.Spec.RequestedNodes, pr.Spec.TargetNode) {
+			patched := archive.DeepCopy()
+			patched.Spec.RequestedNodes = append(patched.Spec.RequestedNodes, pr.Spec.TargetNode)
+			if err := r.Update(ctx, patched); err != nil {
+				return false, err
+			}
 		}
 	}
-	return true, nil
+	return ready, nil
 }
 
 // validateSpec rejects a spec that cannot produce a valid restore Pod, before any
