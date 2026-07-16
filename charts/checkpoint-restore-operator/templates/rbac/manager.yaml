@@ -52,6 +52,7 @@ rules:
   - apiGroups:
       - criu.org
     resources:
+      - checkpointarchives
       - checkpointrestoreoperators
       - checkpointschedules
       - forensicsnapshotchains
@@ -67,6 +68,7 @@ rules:
   - apiGroups:
       - criu.org
     resources:
+      - checkpointarchives/finalizers
       - checkpointrestoreoperators/finalizers
       - checkpointschedules/finalizers
       - forensicsnapshotchains/finalizers
@@ -76,6 +78,7 @@ rules:
   - apiGroups:
       - criu.org
     resources:
+      - checkpointarchives/status
       - checkpointrestoreoperators/status
       - checkpointschedules/status
       - forensicsnapshotchains/status

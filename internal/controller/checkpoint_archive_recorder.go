@@ -28,6 +28,10 @@ import (
 	criuorgv1 "github.com/checkpoint-restore/checkpoint-restore-operator/api/v1"
 )
 
+//+kubebuilder:rbac:groups=criu.org,resources=checkpointarchives,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=criu.org,resources=checkpointarchives/status,verbs=get;update;patch
+//+kubebuilder:rbac:groups=criu.org,resources=checkpointarchives/finalizers,verbs=update
+
 // recordCheckpointArchiveIfEnabled creates a CheckpointArchive for a freshly
 // created checkpoint when the policy matching its namespace/pod/container
 // opts into external storage sync. It is a no-op for checkpoints outside any
