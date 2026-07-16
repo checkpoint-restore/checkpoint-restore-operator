@@ -63,6 +63,10 @@ func recordCheckpointArchiveIfEnabled(
 	if err := c.Create(ctx, archive); err != nil {
 		return err
 	}
+	archive.Status.AvailableNodes = []string{node}
+	if err := c.Status().Update(ctx, archive); err != nil {
+		return err
+	}
 	log.FromContext(ctx).Info("recorded checkpoint archive for external storage sync",
 		"namespace", namespace, "pod", pod, "container", container, "node", node, "path", path)
 	return nil

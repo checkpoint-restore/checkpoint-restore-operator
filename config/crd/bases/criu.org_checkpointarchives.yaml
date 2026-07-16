@@ -83,6 +83,15 @@ spec:
                 description: pod is the name of the pod the archive was taken from.
                 minLength: 1
                 type: string
+              requestedNodes:
+                description: |-
+                  requestedNodes lists nodes that need a local copy of this archive staged
+                  for an imminent restore. PodRestoreReconciler appends its target node;
+                  the checkpoint-syncer on each listed node downloads the archive locally.
+                items:
+                  type: string
+                type: array
+                x-kubernetes-list-type: set
             required:
             - container
             - localPath
@@ -93,10 +102,19 @@ spec:
           status:
             description: status defines the observed state of CheckpointArchive.
             properties:
+              availableNodes:
+                description: |-
+                  availableNodes lists nodes where a local copy of the archive currently
+                  exists. The origin node (spec.node) is listed at creation; a syncer
+                  appends its node after a successful download.
+                items:
+                  type: string
+                type: array
+                x-kubernetes-list-type: set
               conditions:
                 description: |-
                   conditions represent the latest observations of the archive's storage
-                  state. See ConditionArchiveUploaded and ConditionArchiveLocalAvailable.
+                  state. See ConditionArchiveUploaded.
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.

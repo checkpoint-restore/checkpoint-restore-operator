@@ -47,7 +47,8 @@ var _ = Describe("recordCheckpointArchiveIfEnabled", func() {
 
 	BeforeEach(func() {
 		Expect(criuorgv1.AddToScheme(scheme.Scheme)).To(Succeed())
-		c = fake.NewClientBuilder().WithScheme(scheme.Scheme).Build()
+		c = fake.NewClientBuilder().WithScheme(scheme.Scheme).
+			WithStatusSubresource(&criuorgv1.CheckpointArchive{}).Build()
 		resetAllPoliciesToDefault(logr.Discard())
 	})
 
@@ -86,6 +87,26 @@ var _ = Describe("recordCheckpointArchiveIfEnabled", func() {
 			Pod:       "pod",
 			Container: "ctr",
 		}))
+	})
+
+	It("lists the origin node in status.availableNodes", func() {
+		if k8sClient == nil {
+			Skip("envtest environment not available")
+		}
+		ctx := context.Background()
+
+		(&CheckpointRestoreOperatorReconciler{}).handleGlobalPolicies(logr.Discard(), &criuorgv1.GlobalPolicySpec{
+			UploadToExternalStorage: ptr(true),
+		})
+
+		Expect(recordCheckpointArchiveIfEnabled(ctx, k8sClient,
+			"default", "web", "app", "node-a",
+			"/var/lib/kubelet/checkpoints/checkpoint-web_default-app-x.tar")).To(Succeed())
+
+		var list criuorgv1.CheckpointArchiveList
+		Expect(k8sClient.List(ctx, &list, client.InNamespace("default"))).To(Succeed())
+		Expect(list.Items).To(HaveLen(1))
+		Expect(list.Items[0].Status.AvailableNodes).To(ConsistOf("node-a"))
 	})
 
 	It("propagates a Create error instead of swallowing it", func() {

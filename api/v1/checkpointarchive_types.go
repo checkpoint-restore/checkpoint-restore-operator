@@ -50,6 +50,12 @@ type CheckpointArchiveSpec struct {
 	// +required
 	// +kubebuilder:validation:MinLength=1
 	Container string `json:"container"`
+	// requestedNodes lists nodes that need a local copy of this archive staged
+	// for an imminent restore. PodRestoreReconciler appends its target node;
+	// the checkpoint-syncer on each listed node downloads the archive locally.
+	// +optional
+	// +listType=set
+	RequestedNodes []string `json:"requestedNodes,omitempty"`
 }
 
 // Condition types for a CheckpointArchive.
@@ -57,15 +63,12 @@ const (
 	// ConditionArchiveUploaded reports whether the checkpoint-syncer has
 	// uploaded the archive to external storage. False until it has.
 	ConditionArchiveUploaded = "Uploaded"
-	// ConditionArchiveLocalAvailable reports whether the archive is present
-	// on local disk on Spec.Node right now.
-	ConditionArchiveLocalAvailable = "LocalAvailable"
 )
 
 // CheckpointArchiveStatus defines the observed state of CheckpointArchive.
 type CheckpointArchiveStatus struct {
 	// conditions represent the latest observations of the archive's storage
-	// state. See ConditionArchiveUploaded and ConditionArchiveLocalAvailable.
+	// state. See ConditionArchiveUploaded.
 	// +optional
 	// +listType=map
 	// +listMapKey=type
@@ -76,6 +79,12 @@ type CheckpointArchiveStatus struct {
 	// once the checkpoint-syncer has uploaded the archive. Empty until then.
 	// +optional
 	ExternalURI string `json:"externalURI,omitempty"`
+	// availableNodes lists nodes where a local copy of the archive currently
+	// exists. The origin node (spec.node) is listed at creation; a syncer
+	// appends its node after a successful download.
+	// +optional
+	// +listType=set
+	AvailableNodes []string `json:"availableNodes,omitempty"`
 }
 
 //+kubebuilder:object:root=true
