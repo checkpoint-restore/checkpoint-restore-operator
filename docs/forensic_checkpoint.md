@@ -128,37 +128,50 @@ set, retries continue until the time backstop elapses.
 
 ## Manifest Signing
 
-When `integrity.forensicSignature.enabled: true`, the operator builds a YAML manifest
-from the completed chain and signs it with a detached GPG signature at `Completed`.
+When `integrity.forensicSignature.enabled: true`, the operator builds a
+YAML manifest from the completed chain and signs it with a detached GPG
+signature at `Completed`.
 
+### Requirements
 
-**Requirements**
-- `integrity.hashAlgorithm: sha256` is mandatory. Signing without hashing fails the chain.
-- The GPG private key lives in a Secret in the **operator namespace** (not the workload namespace).
-  Defaults: Secret `forensic-signing-key`, data key `signing-key`. Override with
-  `forensicSignature.secretRef` and `forensicSignature.secretKey`.
+- `integrity.hashAlgorithm: sha256` is mandatory. Signing without hashing
+  fails the chain.
+- The GPG private key lives in a Secret in the **operator namespace** (not
+  the workload namespace). Defaults: Secret `forensic-signing-key`, data
+  key `signing-key`. Override with `forensicSignature.secretRef` and
+  `forensicSignature.secretKey`.
 - Key format: armored, unencrypted GPG private key.
 
-**What the operator does**
-1. On `Completed`, builds `status.manifest` from chain metadata and `snapshotChainRecords`
-   (index, pod, checkpoint path, snapshot time, artifact hash, parent hash).
-2. Detach-signs those exact bytes with the configured key.
-3. Writes `status.manifestSignature` (base64) and `status.manifestSignatureKeyID`.
-4. Sets the `SignatureVerified` condition (`SigningSucceeded` or `SigningFailed`).
-Signing errors do **not** fail the capture run: the chain stays `Completed`, only the
-condition reflects failure. Hashing behavior is unchanged.
+### What the operator does
 
-**What the operator does not do**
+1. On `Completed`, builds `status.manifest` from chain metadata and
+   `snapshotChainRecords` (index, pod, checkpoint path, snapshot time,
+   artifact hash, parent hash).
+2. Detach-signs those exact bytes with the configured key.
+3. Writes `status.manifestSignature` (base64) and
+   `status.manifestSignatureKeyID`.
+4. Sets the `SignatureVerified` condition (`SigningSucceeded` or
+   `SigningFailed`).
+
+Signing errors do **not** fail the capture run: the chain stays
+`Completed`, only the condition reflects failure. Hashing behavior is
+unchanged.
+
+### What the operator does not do
+
 - No `manifest.yaml` export to disk or object storage.
 - Workload ServiceAccounts cannot read the signing Secret.
-Verifiers extract `status.manifest` and `status.manifestSignature` and check with `gpg`
-using the matching public key. Exact manifest bytes must be preserved.
 
-We can optionally obtain and save the manifest.yaml file:
-```
-kubectl get forensicsnapshotchain ... -o jsonpath='{.status.manifest}' > manifest.yaml
-```
+Verifiers extract `status.manifest` and `status.manifestSignature` and
+check with `gpg` using the matching public key. Exact manifest bytes must
+be preserved.
 
+Optionally save the manifest to a file for verification:
+
+```bash
+kubectl get forensicsnapshotchain <name> \
+  -o jsonpath='{.status.manifest}' > manifest.yaml
+```
 
 ## Snapshot Lifecycle
 
