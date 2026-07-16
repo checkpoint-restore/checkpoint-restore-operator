@@ -47,7 +47,7 @@ type CaptureSpec struct {
 
 // ForensicSignatureSpec defines the desired state of ForensicSignature
 type ForensicSignatureSpec struct {
-	// Enabled enables manifest generation & detached GPG signing at snapshotchain completion
+	// enabled enables manifest generation & detached GPG signing at snapshotchain completion
 	// Requires integrity.hashAlgorithm to be set
 	// +optional
 	Enabled bool `json:"enabled,omitempty"`
