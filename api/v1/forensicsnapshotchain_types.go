@@ -47,18 +47,18 @@ type CaptureSpec struct {
 
 // ForensicSignatureSpec defines the desired state of ForensicSignature
 type ForensicSignatureSpec struct {
-	//Does manifest generation & detached GPG signing at snapshotchain completion
-	// Requires integrity to be enabled
+	// Enabled enables manifest generation & detached GPG signing at snapshotchain completion
+	// Requires integrity.hashAlgorithm to be set
 	// +optional
 	Enabled bool `json:"enabled,omitempty"`
 
-	//this names the Secret in operator namespace that contains the GPG private key
+	// secretRef names the Secret in operator namespace that contains the GPG private key
 	// Defaults to "forensic-signing-key" when enabled and unset
 	// +optional
 	SecretRef *corev1.LocalObjectReference `json:"secretRef,omitempty"`
 
 	// secretKey is the Secret data key for the GPG private key
-	// Defaults to "signing-key"
+	// Defaults to "signing-key" when enabled and unset
 	// +optional
 	SecretKey string `json:"secretKey,omitempty"`
 }
@@ -197,12 +197,13 @@ type ForensicSnapshotChainStatus struct {
 	// +optional
 	// +listType=atomic
 	SnapshotChainRecords []SnapshotChainRecord `json:"snapshotChainRecords,omitempty"`
-	//manifest is the generated snapshotchain manifest yaml after completion
-	//Verifiers must use exact bytes.
+	// manifest is the generated snapshotchain manifest yaml after completion
+	// Verifiers must use exact bytes.
 	// +optional
 	Manifest string `json:"manifest,omitempty"`
-	//manifestSignature is the detached GPG signature of the manifest
-	//+optional
+	// manifestSignature is the detached GPG signature of the manifest
+	// Verifiers must use exact bytes.
+	// +optional
 	ManifestSignature string `json:"manifestSignature,omitempty"`
 	// manifestSignatureKeyID is the key ID of the GPG key used to sign the manifest
 	// +optional

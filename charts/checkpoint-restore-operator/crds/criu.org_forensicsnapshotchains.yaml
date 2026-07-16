@@ -84,17 +84,17 @@ spec:
                     properties:
                       enabled:
                         description: |-
-                          Does manifest generation & detached GPG signing at snapshotchain completion
-                          Requires integrity to be enabled
+                          Enables manifest generation & detached GPG signing at snapshotchain completion
+                          Requires integrity.hashAlgorithm to be set
                         type: boolean
                       secretKey:
                         description: |-
                           secretKey is the Secret data key for the GPG private key
-                          Defaults to "signing-key"
+                          Defaults to "signing-key" when enabled and unset
                         type: string
                       secretRef:
                         description: |-
-                          this names the Secret in operator namespace that contains the GPG private key
+                          secretRef names the Secret in operator namespace that contains the GPG private key
                           Defaults to "forensic-signing-key" when enabled and unset
                         properties:
                           name:
@@ -277,8 +277,9 @@ spec:
                   Verifiers must use exact bytes.
                 type: string
               manifestSignature:
-                description: manifestSignature is the detached GPG signature of the
-                  manifest
+                description: |-
+                  manifestSignature is the detached GPG signature of the manifest
+                  Verifiers must use exact bytes.
                 type: string
               manifestSignatureKeyID:
                 description: manifestSignatureKeyID is the key ID of the GPG key used
