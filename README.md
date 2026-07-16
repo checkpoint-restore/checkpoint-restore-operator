@@ -127,6 +127,19 @@ for both containerd and CRI-O.
 See [docs/restore.md](docs/restore.md) for the full design, a `PodRestore`
 example, how to deploy the CRI proxy, and the security considerations.
 
+## External Checkpoint Storage
+
+Checkpoint archives are node-local files by default. The operator can
+optionally replicate opted-in archives to S3-compatible object storage so they
+survive the loss of their origin node. The feature is opt-in via the
+`uploadToExternalStorage` policy field and an `externalStorage` backend block on
+the `CheckpointRestoreOperator`; local creation, retention, and restore are
+unchanged for anyone who does not enable it.
+
+See [docs/external_storage.md](docs/external_storage.md) for the design, the
+`CheckpointArchive` resource, configuration, the kubelet checkpoint RBAC
+prerequisite, and the current implementation status.
+
 ## Getting Started
 
 You'll need a Kubernetes cluster to run against. You can use
