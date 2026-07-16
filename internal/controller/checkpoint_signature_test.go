@@ -156,7 +156,7 @@ var _ = Describe("signManifest", func() {
 
 	//Sign and Verify a simple manifest
 	//Generate a test signing key and store it in a fake K8s Secret
-	//Call signManifest, loads rhe secret and sign the manifest
+	//Call signManifest, loads the secret and sign the manifest
 	//Decode the signature and verify it using the public key
 	//If this passes, gpg --verify will also pass
 	It("returns a verifiable detached GPG signature", func() {

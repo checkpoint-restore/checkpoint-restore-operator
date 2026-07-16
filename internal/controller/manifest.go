@@ -3,8 +3,9 @@ package controller
 import (
 	"time"
 
-	criuorgv1 "github.com/checkpoint-restore/checkpoint-restore-operator/api/v1"
 	"sigs.k8s.io/yaml"
+
+	criuorgv1 "github.com/checkpoint-restore/checkpoint-restore-operator/api/v1"
 )
 
 const forensicManifestVersion = 1
