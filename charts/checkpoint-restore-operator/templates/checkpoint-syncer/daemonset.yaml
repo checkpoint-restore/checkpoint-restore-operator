@@ -1,0 +1,89 @@
+{{- if .Values.checkpointSyncer.enabled }}
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "checkpoint-restore-operator.checkpointSyncer.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "checkpoint-restore-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: checkpoint-syncer
+spec:
+  selector:
+    matchLabels:
+      {{- include "checkpoint-restore-operator.checkpointSyncer.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "checkpoint-restore-operator.checkpointSyncer.selectorLabels" . | nindent 8 }}
+        {{- with .Values.checkpointSyncer.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.checkpointSyncer.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "checkpoint-restore-operator.checkpointSyncer.name" . }}
+      {{- with .Values.checkpointSyncer.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.checkpointSyncer.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      {{- with .Values.checkpointSyncer.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.checkpointSyncer.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.checkpointSyncer.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: checkpoint-syncer
+          image: {{ include "checkpoint-restore-operator.checkpointSyncer.image" . | quote }}
+          imagePullPolicy: {{ .Values.checkpointSyncer.image.pullPolicy }}
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.checkpointSyncer.healthProbe.liveness.path }}
+              port: health
+            initialDelaySeconds: {{ .Values.checkpointSyncer.healthProbe.liveness.initialDelaySeconds }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.checkpointSyncer.healthProbe.readiness.path }}
+              port: health
+            initialDelaySeconds: {{ .Values.checkpointSyncer.healthProbe.readiness.initialDelaySeconds }}
+          ports:
+            - name: health
+              containerPort: {{ include "checkpoint-restore-operator.portFromBindAddress" .Values.checkpointSyncer.healthProbe.bindAddress }}
+              protocol: TCP
+          {{- with .Values.checkpointSyncer.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: kubelet-checkpoints
+              mountPath: {{ .Values.checkpointSyncer.hostPathCheckpointDirectory }}
+      volumes:
+        - name: kubelet-checkpoints
+          hostPath:
+            path: {{ .Values.checkpointSyncer.hostPathCheckpointDirectory }}
+            type: Directory
+{{- end }}

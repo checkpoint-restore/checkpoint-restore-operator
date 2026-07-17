@@ -162,3 +162,40 @@ criProxy:
       memory: 64Mi
     limits:
       memory: 128Mi
+
+checkpointSyncer:
+  enabled: false
+  image:
+    registry: ""
+    repository: checkpoint-syncer
+    # Defaults to v<.Chart.AppVersion>. Override for locally built images.
+    tag: ""
+    pullPolicy: IfNotPresent
+
+  healthProbe:
+    # The health container port used by the probes is derived from this
+    # address.
+    bindAddress: ":8081"
+    liveness:
+      path: /healthz
+      initialDelaySeconds: 15
+    readiness:
+      path: /readyz
+      initialDelaySeconds: 5
+
+  hostPathCheckpointDirectory: /var/lib/kubelet/checkpoints
+
+  # kubelet writes checkpoint archives as root with mode 0600, so the syncer
+  # must run as root to read them for upload and to stage downloaded archives.
+  podSecurityContext:
+    runAsUser: 0
+    runAsGroup: 0
+
+  priorityClassName: ""
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+  resources: {}
