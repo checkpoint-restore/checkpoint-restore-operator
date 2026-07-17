@@ -155,6 +155,19 @@ docker-build-cri-proxy: ## Build docker image for the node-side CRI proxy.
 docker-push-cri-proxy: ## Push the CRI proxy docker image.
 	$(CONTAINER_TOOL) push ${CRI_PROXY_IMG}
 
+CHECKPOINT_SYNCER_IMG ?= checkpoint-syncer:latest
+.PHONY: build-checkpoint-syncer
+build-checkpoint-syncer: ## Build the checkpoint-syncer binary.
+	go build -o bin/checkpoint-syncer cmd/checkpoint-syncer/main.go
+
+.PHONY: docker-build-checkpoint-syncer
+docker-build-checkpoint-syncer: ## Build docker image for the checkpoint-syncer.
+	$(CONTAINER_TOOL) build -f Dockerfile.checkpoint-syncer -t ${CHECKPOINT_SYNCER_IMG} .
+
+.PHONY: docker-push-checkpoint-syncer
+docker-push-checkpoint-syncer: ## Push the checkpoint-syncer docker image.
+	$(CONTAINER_TOOL) push ${CHECKPOINT_SYNCER_IMG}
+
 # PLATFORMS defines the target platforms for  the manager image be build to provide support to multiple
 # architectures. (i.e. make docker-buildx IMG=myregistry/mypoperator:0.0.1). To use this option you need to:
 # - able to use docker buildx . More info: https://docs.docker.com/build/buildx/

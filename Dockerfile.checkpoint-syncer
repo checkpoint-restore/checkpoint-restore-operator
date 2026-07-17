@@ -1,0 +1,21 @@
+# Build the checkpoint-syncer binary (per-node object-storage sync for opted-in checkpoints).
+FROM golang:latest AS builder
+ARG TARGETOS
+ARG TARGETARCH
+
+WORKDIR /workspace
+COPY go.mod go.mod
+COPY go.sum go.sum
+COPY vendor/ vendor/
+COPY cmd/checkpoint-syncer/ cmd/checkpoint-syncer/
+COPY internal/ internal/
+COPY api/ api/
+
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} \
+    go build -mod=vendor -a -o checkpoint-syncer cmd/checkpoint-syncer/main.go
+
+FROM gcr.io/distroless/static:nonroot
+WORKDIR /
+COPY --from=builder /workspace/checkpoint-syncer .
+USER 65532:65532
+ENTRYPOINT ["/checkpoint-syncer"]
