@@ -1,0 +1,57 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: checkpoint-syncer
+  namespace: system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: checkpoint-syncer-role
+rules:
+  - apiGroups: ["criu.org"]
+    resources: ["checkpointrestoreoperators"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["criu.org"]
+    resources: ["checkpointarchives"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  - apiGroups: ["criu.org"]
+    resources: ["checkpointarchives/status"]
+    verbs: ["get", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: checkpoint-syncer-rolebinding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: checkpoint-syncer-role
+subjects:
+  - kind: ServiceAccount
+    name: checkpoint-syncer
+    namespace: system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: checkpoint-syncer-secret-reader
+  namespace: system
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: checkpoint-syncer-secret-reader
+  namespace: system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: checkpoint-syncer-secret-reader
+subjects:
+  - kind: ServiceAccount
+    name: checkpoint-syncer
+    namespace: system

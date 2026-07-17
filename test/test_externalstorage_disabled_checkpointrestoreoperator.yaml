@@ -1,0 +1,16 @@
+apiVersion: criu.org/v1
+kind: CheckpointRestoreOperator
+metadata:
+  labels:
+    app.kubernetes.io/name: checkpointrestoreoperator
+    app.kubernetes.io/part-of: checkpoint-restore-operator
+  name: checkpointrestoreoperator-sample
+spec:
+  checkpointDirectory: /var/lib/kubelet/checkpoints
+  applyPoliciesImmediately: true
+  globalPolicy:
+    maxCheckpointsPerNamespace: 50
+    maxCheckpointsPerPod: 50
+    maxCheckpointsPerContainer: 50
+    # uploadToExternalStorage intentionally left unset (defaults to false):
+    # no CheckpointArchive record should be created for checkpoints.

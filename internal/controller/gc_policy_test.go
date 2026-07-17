@@ -161,3 +161,64 @@ var _ = Describe("applyPolicies", func() {
 		Expect(policies.namespacePolicies[0].MaxCheckpointSize.Cmp(resource.MustParse("5Gi"))).To(Equal(0))
 	})
 })
+
+var _ = Describe("policySnapshot.resolveUploadToExternalStorage", func() {
+	details := &checkpointDetails{namespace: "ns", pod: "pod", container: "ctr"}
+
+	It("defaults to false when nothing is configured", func() {
+		snap := policySnapshot{}
+		Expect(snap.resolveUploadToExternalStorage(details)).To(BeFalse())
+	})
+
+	It("uses the global policy when no specific policy matches", func() {
+		snap := policySnapshot{uploadToExternalStorage: true}
+		Expect(snap.resolveUploadToExternalStorage(details)).To(BeTrue())
+	})
+
+	It("prefers a matching namespace policy over the global default", func() {
+		snap := policySnapshot{
+			uploadToExternalStorage: true,
+			namespacePolicies: []criuorgv1.NamespacePolicySpec{
+				{Namespace: "ns", UploadToExternalStorage: ptr(false)},
+			},
+		}
+		Expect(snap.resolveUploadToExternalStorage(details)).To(BeFalse())
+	})
+
+	It("prefers a matching pod policy over a matching namespace policy", func() {
+		snap := policySnapshot{
+			namespacePolicies: []criuorgv1.NamespacePolicySpec{
+				{Namespace: "ns", UploadToExternalStorage: ptr(false)},
+			},
+			podPolicies: []criuorgv1.PodPolicySpec{
+				{Namespace: "ns", Pod: "pod", UploadToExternalStorage: ptr(true)},
+			},
+		}
+		Expect(snap.resolveUploadToExternalStorage(details)).To(BeTrue())
+	})
+
+	It("prefers a matching container policy over pod and namespace policies", func() {
+		snap := policySnapshot{
+			namespacePolicies: []criuorgv1.NamespacePolicySpec{
+				{Namespace: "ns", UploadToExternalStorage: ptr(false)},
+			},
+			podPolicies: []criuorgv1.PodPolicySpec{
+				{Namespace: "ns", Pod: "pod", UploadToExternalStorage: ptr(false)},
+			},
+			containerPolicies: []criuorgv1.ContainerPolicySpec{
+				{Namespace: "ns", Pod: "pod", Container: "ctr", UploadToExternalStorage: ptr(true)},
+			},
+		}
+		Expect(snap.resolveUploadToExternalStorage(details)).To(BeTrue())
+	})
+
+	It("falls through to the global default when a matching policy leaves the field unset", func() {
+		snap := policySnapshot{
+			uploadToExternalStorage: true,
+			podPolicies: []criuorgv1.PodPolicySpec{
+				{Namespace: "ns", Pod: "pod"},
+			},
+		}
+		Expect(snap.resolveUploadToExternalStorage(details)).To(BeTrue())
+	})
+})

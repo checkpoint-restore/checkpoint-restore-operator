@@ -263,6 +263,128 @@ var _ = Describe("PodRestoreReconciler", func() {
 		Expect(apierrors.IsNotFound(err)).To(BeTrue())
 	})
 
+	It("proceeds without waiting when no CheckpointArchive tracks the checkpoint", func() {
+		r := makeReconciler(newPodRestore(), node())
+		reconcileN(r, 2) // finalizer -> create Pod
+
+		Expect(get(r).Status.PodName).To(Equal(name))
+	})
+
+	It("proceeds without waiting when the CheckpointArchive already names the target node", func() {
+		archive := &criuorgv1.CheckpointArchive{
+			ObjectMeta: metav1.ObjectMeta{Name: "archive-1", Namespace: ns},
+			Spec: criuorgv1.CheckpointArchiveSpec{
+				Node:      "worker-1",
+				LocalPath: tar,
+				Namespace: ns,
+				Pod:       "redis",
+				Container: "redis",
+			},
+		}
+		r := makeReconciler(newPodRestore(), node(), archive)
+		reconcileN(r, 2) // finalizer -> create Pod
+
+		Expect(get(r).Status.PodName).To(Equal(name))
+	})
+
+	It("reports WaitingForArchiveSync and does not create the Pod for a cross-node archive not yet staged", func() {
+		archive := &criuorgv1.CheckpointArchive{
+			ObjectMeta: metav1.ObjectMeta{Name: "archive-1", Namespace: ns},
+			Spec: criuorgv1.CheckpointArchiveSpec{
+				Node:      "worker-2", // origin node, not the restore's TargetNode
+				LocalPath: tar,
+				Namespace: ns,
+				Pod:       "redis",
+				Container: "redis",
+			},
+			Status: criuorgv1.CheckpointArchiveStatus{
+				AvailableNodes: []string{"worker-2"}, // origin only, not yet staged on worker-1
+				Conditions: []metav1.Condition{{
+					Type:               criuorgv1.ConditionArchiveUploaded,
+					Status:             metav1.ConditionTrue,
+					Reason:             "Uploaded",
+					Message:            "uploaded by checkpoint-syncer",
+					LastTransitionTime: metav1.Now(),
+				}},
+			},
+		}
+		r := makeReconciler(newPodRestore(), node(), archive)
+		reconcileN(r, 2) // finalizer -> blocked on archive sync
+
+		c := ready(r)
+		Expect(c.Status).To(Equal(metav1.ConditionFalse))
+		Expect(c.Reason).To(Equal("WaitingForArchiveSync"))
+		Expect(get(r).Status.PodName).To(BeEmpty())
+
+		pod := &corev1.Pod{}
+		err := r.Get(context.Background(), types.NamespacedName{Name: name, Namespace: ns}, pod)
+		Expect(apierrors.IsNotFound(err)).To(BeTrue())
+	})
+
+	It("appends TargetNode to the archive's requestedNodes when waiting", func() {
+		archive := &criuorgv1.CheckpointArchive{
+			ObjectMeta: metav1.ObjectMeta{Name: "archive-1", Namespace: ns},
+			Spec: criuorgv1.CheckpointArchiveSpec{
+				Node:      "worker-2", // origin node, not the restore's TargetNode
+				LocalPath: tar,
+				Namespace: ns,
+				Pod:       "redis",
+				Container: "redis",
+			},
+			Status: criuorgv1.CheckpointArchiveStatus{
+				AvailableNodes: []string{"worker-2"},
+				Conditions: []metav1.Condition{{
+					Type:               criuorgv1.ConditionArchiveUploaded,
+					Status:             metav1.ConditionTrue,
+					Reason:             "Uploaded",
+					Message:            "uploaded by checkpoint-syncer",
+					LastTransitionTime: metav1.Now(),
+				}},
+			},
+		}
+		r := makeReconciler(newPodRestore(), node(), archive)
+		reconcileN(r, 2) // finalizer -> blocked on archive sync, requests worker-1
+
+		var got criuorgv1.CheckpointArchive
+		Expect(r.Get(context.Background(), types.NamespacedName{Name: "archive-1", Namespace: ns}, &got)).To(Succeed())
+		Expect(got.Spec.RequestedNodes).To(ConsistOf("worker-1"))
+	})
+
+	It("creates the Pod once the archive is available on the target node", func() {
+		archive := &criuorgv1.CheckpointArchive{
+			ObjectMeta: metav1.ObjectMeta{Name: "archive-1", Namespace: ns},
+			Spec: criuorgv1.CheckpointArchiveSpec{
+				Node:      "worker-2",
+				LocalPath: tar,
+				Namespace: ns,
+				Pod:       "redis",
+				Container: "redis",
+			},
+			Status: criuorgv1.CheckpointArchiveStatus{
+				AvailableNodes: []string{"worker-2"}, // not yet staged on worker-1
+				Conditions: []metav1.Condition{{
+					Type:               criuorgv1.ConditionArchiveUploaded,
+					Status:             metav1.ConditionTrue,
+					Reason:             "Uploaded",
+					Message:            "uploaded by checkpoint-syncer",
+					LastTransitionTime: metav1.Now(),
+				}},
+			},
+		}
+		r := makeReconciler(newPodRestore(), node(), archive)
+		reconcileN(r, 2) // finalizer -> blocked on archive sync
+		Expect(get(r).Status.PodName).To(BeEmpty())
+
+		// The checkpoint-syncer stages the archive on the target node.
+		var got criuorgv1.CheckpointArchive
+		Expect(r.Get(context.Background(), types.NamespacedName{Name: "archive-1", Namespace: ns}, &got)).To(Succeed())
+		got.Status.AvailableNodes = []string{"worker-2", "worker-1"}
+		Expect(r.Update(context.Background(), &got)).To(Succeed())
+
+		reconcileN(r, 1) // create Pod
+		Expect(get(r).Status.PodName).To(Equal(name))
+	})
+
 	It("reports CheckpointsPinned=False when the archive is unreachable", func() {
 		r := makeReconciler(newPodRestore(), node())
 		reconcileN(r, 2)

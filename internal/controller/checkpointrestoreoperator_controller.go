@@ -70,6 +70,7 @@ var (
 	maxCheckpointsPerPod       int = 20
 	maxCheckpointsPerNamespace int = 30
 	retainOrphan               *bool
+	uploadToExternalStorage    bool
 	maxCheckpointSize          resource.Quantity = resource.MustParse("100Gi")
 	maxTotalSizePerPod         resource.Quantity = resource.MustParse("100Gi")
 	maxTotalSizePerContainer   resource.Quantity = resource.MustParse("100Gi")
@@ -81,11 +82,13 @@ var (
 
 type garbageCollector struct {
 	sync.Mutex
+	Client client.Client
 }
 
 type policySnapshot struct {
 	checkpointDirectory        string
 	retainOrphan               bool
+	uploadToExternalStorage    bool
 	maxCheckpointsPerContainer int
 	maxCheckpointsPerPod       int
 	maxCheckpointsPerNamespace int
@@ -142,6 +145,7 @@ func resetAllPoliciesToDefault(log logr.Logger) {
 
 func resetAllPoliciesToDefaultLocked(log logr.Logger) {
 	retainOrphan = nil
+	uploadToExternalStorage = false
 	maxCheckpointsPerContainer = 10
 	maxCheckpointsPerPod = 20
 	maxCheckpointsPerNamespace = 30
@@ -211,13 +215,11 @@ func (r *CheckpointRestoreOperatorReconciler) handleGlobalPoliciesLocked(log log
 		maxTotalSizePerContainer = *globalPolicies.MaxTotalSizePerContainer
 		log.Info("Changed MaxTotalSizePerContainer", "maxTotalSizePerContainer", maxTotalSizePerContainer.String())
 	}
-}
 
-func (r *CheckpointRestoreOperatorReconciler) handleSpecificPolicies(log logr.Logger, spec *criuorgv1.CheckpointRestoreOperatorSpec) {
-	policyMutex.Lock()
-	defer policyMutex.Unlock()
-
-	r.handleSpecificPoliciesLocked(log, spec)
+	if globalPolicies.UploadToExternalStorage != nil {
+		uploadToExternalStorage = *globalPolicies.UploadToExternalStorage
+		log.Info("Changed UploadToExternalStorage", "uploadToExternalStorage", uploadToExternalStorage)
+	}
 }
 
 func (r *CheckpointRestoreOperatorReconciler) handleSpecificPoliciesLocked(log logr.Logger, spec *criuorgv1.CheckpointRestoreOperatorSpec) {
@@ -266,6 +268,7 @@ func (r *CheckpointRestoreOperatorReconciler) applyPolicySpec(log logr.Logger, s
 }
 
 func (r *CheckpointRestoreOperatorReconciler) restartGarbageCollector() {
+	GarbageCollector.Client = r.Client
 	quit <- true
 	quit = make(chan bool)
 	go GarbageCollector.runGarbageCollector()
@@ -287,6 +290,7 @@ func currentPolicySnapshotLocked() policySnapshot {
 	return policySnapshot{
 		checkpointDirectory:        checkpointDirectory,
 		retainOrphan:               retain,
+		uploadToExternalStorage:    uploadToExternalStorage,
 		maxCheckpointsPerContainer: maxCheckpointsPerContainer,
 		maxCheckpointsPerPod:       maxCheckpointsPerPod,
 		maxCheckpointsPerNamespace: maxCheckpointsPerNamespace,
@@ -509,6 +513,24 @@ func (policies policySnapshot) findNamespacePolicy(details *checkpointDetails) *
 		}
 	}
 	return nil
+}
+
+// uploadToExternalStorage resolves whether checkpoints matching details
+// should be synced to external storage, using the same specificity order
+// (container > pod > namespace > global) as retention policy resolution. A
+// matching policy that leaves the field unset falls through to the next,
+// less specific level, rather than being treated as an explicit false.
+func (policies policySnapshot) resolveUploadToExternalStorage(details *checkpointDetails) bool {
+	if policy := policies.findContainerPolicy(details); policy != nil && policy.UploadToExternalStorage != nil {
+		return *policy.UploadToExternalStorage
+	}
+	if policy := policies.findPodPolicy(details); policy != nil && policy.UploadToExternalStorage != nil {
+		return *policy.UploadToExternalStorage
+	}
+	if policy := policies.findNamespacePolicy(details); policy != nil && policy.UploadToExternalStorage != nil {
+		return *policy.UploadToExternalStorage
+	}
+	return policies.uploadToExternalStorage
 }
 
 func applyPoliciesImmediately(log logr.Logger, policies policySnapshot) {
@@ -1201,6 +1223,7 @@ func (gc *garbageCollector) runGarbageCollector() {
 // SetupWithManager sets up the controller with the Manager.
 func (r *CheckpointRestoreOperatorReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	quit = make(chan bool)
+	GarbageCollector.Client = r.Client
 
 	go GarbageCollector.runGarbageCollector()
 

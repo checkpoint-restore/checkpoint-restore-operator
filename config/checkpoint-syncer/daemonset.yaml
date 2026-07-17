@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: checkpoint-syncer
+  namespace: system
+  labels:
+    app.kubernetes.io/name: checkpoint-syncer
+    app.kubernetes.io/part-of: checkpoint-restore-operator
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: checkpoint-syncer
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: checkpoint-syncer
+    spec:
+      serviceAccountName: checkpoint-syncer
+      # kubelet writes checkpoint archives as root with mode 0600, so the syncer
+      # must run as root to read them for upload and to stage downloaded archives.
+      securityContext:
+        runAsUser: 0
+        runAsGroup: 0
+      containers:
+        - name: checkpoint-syncer
+          image: checkpoint-syncer:latest
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          livenessProbe:
+            httpGet: { path: /healthz, port: 8081 }
+            initialDelaySeconds: 15
+          readinessProbe:
+            httpGet: { path: /readyz, port: 8081 }
+            initialDelaySeconds: 5
+          volumeMounts:
+            - name: kubelet-checkpoints
+              mountPath: /var/lib/kubelet/checkpoints
+      volumes:
+        - name: kubelet-checkpoints
+          hostPath:
+            path: /var/lib/kubelet/checkpoints
+            type: Directory

@@ -1,0 +1,85 @@
+{{- if .Values.checkpointSyncer.enabled }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "checkpoint-restore-operator.checkpointSyncerRole.name" . }}
+  labels:
+    {{- include "checkpoint-restore-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: checkpoint-syncer
+rules:
+  - apiGroups:
+      - criu.org
+    resources:
+      - checkpointrestoreoperators
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - criu.org
+    resources:
+      - checkpointarchives
+    verbs:
+      - get
+      - list
+      - watch
+      - update
+      - patch
+  - apiGroups:
+      - criu.org
+    resources:
+      - checkpointarchives/status
+    verbs:
+      - get
+      - update
+      - patch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "checkpoint-restore-operator.checkpointSyncerRoleBinding.name" . }}
+  labels:
+    {{- include "checkpoint-restore-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: checkpoint-syncer
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "checkpoint-restore-operator.checkpointSyncerRole.name" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "checkpoint-restore-operator.checkpointSyncer.name" . }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "checkpoint-restore-operator.checkpointSyncerSecretReader.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "checkpoint-restore-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: checkpoint-syncer
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - secrets
+    verbs:
+      - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "checkpoint-restore-operator.checkpointSyncerSecretReader.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "checkpoint-restore-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: checkpoint-syncer
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "checkpoint-restore-operator.checkpointSyncerSecretReader.name" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "checkpoint-restore-operator.checkpointSyncer.name" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

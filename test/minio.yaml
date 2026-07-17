@@ -1,0 +1,112 @@
+# MinIO fixture for the external-storage e2e test.
+#
+# Deploys a single-instance MinIO server plus a one-shot Job that creates
+# the "checkpoints" bucket, and a Secret with the credentials the
+# checkpoint-syncer reads via CheckpointRestoreOperator.spec.externalStorage.secretRef.
+#
+# Everything lives in the checkpoint-restore-operator namespace, alongside
+# the operator and the checkpoint-syncer DaemonSet.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: checkpoint-restore-operator
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: checkpoint-storage-credentials
+  namespace: checkpoint-restore-operator
+type: Opaque
+stringData:
+  accessKeyID: minioadmin
+  secretAccessKey: minioadmin
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minio
+  namespace: checkpoint-restore-operator
+  labels:
+    app: minio
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: minio
+  template:
+    metadata:
+      labels:
+        app: minio
+    spec:
+      containers:
+        - name: minio
+          image: minio/minio
+          args:
+            - server
+            - /data
+            - --console-address
+            - :9001
+          env:
+            - name: MINIO_ROOT_USER
+              value: minioadmin
+            - name: MINIO_ROOT_PASSWORD
+              value: minioadmin
+          ports:
+            - name: api
+              containerPort: 9000
+            - name: console
+              containerPort: 9001
+          readinessProbe:
+            httpGet:
+              path: /minio/health/ready
+              port: 9000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /minio/health/live
+              port: 9000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio
+  namespace: checkpoint-restore-operator
+  labels:
+    app: minio
+spec:
+  selector:
+    app: minio
+  ports:
+    - name: api
+      port: 9000
+      targetPort: 9000
+    - name: console
+      port: 9001
+      targetPort: 9001
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: minio-create-bucket
+  namespace: checkpoint-restore-operator
+spec:
+  backoffLimit: 6
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: mc
+          image: minio/mc
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              until mc alias set local http://minio.checkpoint-restore-operator:9000 minioadmin minioadmin; do
+                echo "waiting for minio..."
+                sleep 2
+              done
+              mc mb --ignore-existing local/checkpoints

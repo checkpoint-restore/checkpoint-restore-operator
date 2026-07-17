@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -160,6 +161,21 @@ func (r *PodRestoreReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, err
 	}
 
+	// Cross-node restore: if a checkpoint was recorded under a policy that opts
+	// into external storage sync and its CheckpointArchive names a different
+	// origin node than TargetNode, wait for the checkpoint-syncer to stage a
+	// local copy on TargetNode before rendering the Pod, so the CRI proxy sees
+	// a plain local file exactly as it does today.
+	ready, err := r.checkpointsReadyOnTargetNode(ctx, pr)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if !ready {
+		setReady(pr, metav1.ConditionFalse, "WaitingForArchiveSync",
+			"waiting for the checkpoint-syncer to stage the source checkpoint archive on "+pr.Spec.TargetNode)
+		return r.saveStatus(ctx, pr, before, ctrl.Result{RequeueAfter: 10 * time.Second})
+	}
+
 	// Pin the source checkpoints against retention while the restore is in flight.
 	// This is best-effort and node-local: cross-node the archive lives on
 	// TargetNode and the pin is a no-op, so report whether it was enforced rather
@@ -182,7 +198,7 @@ func (r *PodRestoreReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	// Ensure the restore Pod exists and is owned by us, then map its state onto the
 	// Ready condition.
 	pod := &corev1.Pod{}
-	err := r.Get(ctx, client.ObjectKey{Namespace: pr.Namespace, Name: pr.Name}, pod)
+	err = r.Get(ctx, client.ObjectKey{Namespace: pr.Namespace, Name: pr.Name}, pod)
 	switch {
 	case apierrors.IsNotFound(err):
 		// If we recorded a Pod earlier and it is now gone, that is drift: report it
@@ -240,6 +256,53 @@ func (r *PodRestoreReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		setReady(pr, metav1.ConditionFalse, "Restoring", "Restore Pod is not yet running")
 		return r.saveStatus(ctx, pr, before, ctrl.Result{RequeueAfter: 3 * time.Second})
 	}
+}
+
+// checkpointsReadyOnTargetNode reports whether every checkpoint this
+// PodRestore references is available on disk on Spec.TargetNode, consulting
+// CheckpointArchive records for checkpoints that were created under a policy
+// opting into external storage sync. A checkpoint with no CheckpointArchive
+// is untouched by that feature and is always treated as ready, preserving
+// today's behavior for restores that don't use external storage. A
+// checkpoint whose CheckpointArchive names a different origin node is ready
+// only once the checkpoint-syncer has staged a local copy on TargetNode and
+// recorded it in Status.AvailableNodes. While waiting, TargetNode is appended
+// to the archive's Spec.RequestedNodes (once it has been uploaded) so the
+// syncer knows to stage it there.
+func (r *PodRestoreReconciler) checkpointsReadyOnTargetNode(ctx context.Context, pr *criuorgv1.PodRestore) (bool, error) {
+	var archives criuorgv1.CheckpointArchiveList
+	if err := r.List(ctx, &archives); err != nil {
+		return false, err
+	}
+
+	byPath := make(map[string]*criuorgv1.CheckpointArchive, len(archives.Items))
+	for i := range archives.Items {
+		archive := &archives.Items[i]
+		byPath[archive.Spec.LocalPath] = archive
+	}
+
+	ready := true
+	for _, cp := range pr.Spec.Checkpoints {
+		archive, tracked := byPath[cp.Path]
+		if !tracked || archive.Spec.Node == pr.Spec.TargetNode {
+			continue
+		}
+		if slices.Contains(archive.Status.AvailableNodes, pr.Spec.TargetNode) {
+			continue
+		}
+		// Not staged yet: request it (idempotent) if it has been uploaded, and
+		// report not-ready so the caller keeps waiting.
+		ready = false
+		if meta.IsStatusConditionTrue(archive.Status.Conditions, criuorgv1.ConditionArchiveUploaded) &&
+			!slices.Contains(archive.Spec.RequestedNodes, pr.Spec.TargetNode) {
+			patched := archive.DeepCopy()
+			patched.Spec.RequestedNodes = append(patched.Spec.RequestedNodes, pr.Spec.TargetNode)
+			if err := r.Update(ctx, patched); err != nil {
+				return false, err
+			}
+		}
+	}
+	return ready, nil
 }
 
 // validateSpec rejects a spec that cannot produce a valid restore Pod, before any

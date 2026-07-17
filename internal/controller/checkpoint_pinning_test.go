@@ -17,11 +17,18 @@ limitations under the License.
 package controller
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 
+	"github.com/go-logr/logr"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/scheme"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	criuorgv1 "github.com/checkpoint-restore/checkpoint-restore-operator/api/v1"
 )
 
 var _ = Describe("isCheckpointPinned", func() {
@@ -141,6 +148,97 @@ var _ = Describe("partitionArchives", func() {
 		for _, p := range pinned {
 			Expect(deletable).NotTo(ContainElement(p))
 		}
+	})
+})
+
+var _ = Describe("removeArchiveUnlessPinned mirrors deletion to CheckpointArchive", func() {
+	var (
+		dir     string
+		archive string
+	)
+
+	BeforeEach(func() {
+		Expect(criuorgv1.AddToScheme(scheme.Scheme)).To(Succeed())
+
+		var err error
+		dir, err = os.MkdirTemp("", "checkpoint-archive-gc-test-*")
+		Expect(err).NotTo(HaveOccurred())
+		archive = filepath.Join(dir, "checkpoint-mypod_default-mycontainer-2026-06-12T10:00:00Z.tar")
+		Expect(os.WriteFile(archive, []byte("fake tar"), 0o644)).To(Succeed())
+	})
+
+	AfterEach(func() {
+		Expect(os.RemoveAll(dir)).To(Succeed())
+		GarbageCollector.Client = nil
+	})
+
+	It("does nothing beyond the local delete when the GC has no client configured", func() {
+		removeArchiveUnlessPinned(logr.Discard(), archive)
+		_, err := os.Stat(archive)
+		Expect(os.IsNotExist(err)).To(BeTrue())
+	})
+
+	It("deletes the matching CheckpointArchive when the local file is removed", func() {
+		fakeClient := fake.NewClientBuilder().WithScheme(scheme.Scheme).WithObjects(&criuorgv1.CheckpointArchive{
+			ObjectMeta: metav1.ObjectMeta{Name: "archive-1", Namespace: "default"},
+			Spec: criuorgv1.CheckpointArchiveSpec{
+				Node:      "node-a",
+				LocalPath: archive,
+				Namespace: "default",
+				Pod:       "mypod",
+				Container: "mycontainer",
+			},
+		}).Build()
+		GarbageCollector.Client = fakeClient
+
+		removeArchiveUnlessPinned(logr.Discard(), archive)
+
+		var list criuorgv1.CheckpointArchiveList
+		Expect(fakeClient.List(context.Background(), &list)).To(Succeed())
+		Expect(list.Items).To(BeEmpty())
+	})
+
+	It("leaves unrelated CheckpointArchive records untouched", func() {
+		other := filepath.Join(dir, "other.tar")
+		fakeClient := fake.NewClientBuilder().WithScheme(scheme.Scheme).WithObjects(&criuorgv1.CheckpointArchive{
+			ObjectMeta: metav1.ObjectMeta{Name: "archive-1", Namespace: "default"},
+			Spec: criuorgv1.CheckpointArchiveSpec{
+				Node:      "node-a",
+				LocalPath: other,
+				Namespace: "default",
+				Pod:       "otherpod",
+				Container: "othercontainer",
+			},
+		}).Build()
+		GarbageCollector.Client = fakeClient
+
+		removeArchiveUnlessPinned(logr.Discard(), archive)
+
+		var list criuorgv1.CheckpointArchiveList
+		Expect(fakeClient.List(context.Background(), &list)).To(Succeed())
+		Expect(list.Items).To(HaveLen(1))
+	})
+
+	It("does not delete the CheckpointArchive when the archive is pinned", func() {
+		Expect(os.WriteFile(archive+".keep", []byte("{}"), 0o644)).To(Succeed())
+		fakeClient := fake.NewClientBuilder().WithScheme(scheme.Scheme).WithObjects(&criuorgv1.CheckpointArchive{
+			ObjectMeta: metav1.ObjectMeta{Name: "archive-1", Namespace: "default"},
+			Spec: criuorgv1.CheckpointArchiveSpec{
+				Node:      "node-a",
+				LocalPath: archive,
+				Namespace: "default",
+				Pod:       "mypod",
+				Container: "mycontainer",
+			},
+		}).Build()
+		GarbageCollector.Client = fakeClient
+
+		removeArchiveUnlessPinned(logr.Discard(), archive)
+
+		Expect(archive).To(BeAnExistingFile())
+		var list criuorgv1.CheckpointArchiveList
+		Expect(fakeClient.List(context.Background(), &list)).To(Succeed())
+		Expect(list.Items).To(HaveLen(1))
 	})
 })
 

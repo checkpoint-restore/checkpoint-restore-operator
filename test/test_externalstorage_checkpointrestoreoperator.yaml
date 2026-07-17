@@ -1,0 +1,26 @@
+apiVersion: criu.org/v1
+kind: CheckpointRestoreOperator
+metadata:
+  labels:
+    app.kubernetes.io/name: checkpointrestoreoperator
+    app.kubernetes.io/part-of: checkpoint-restore-operator
+  name: checkpointrestoreoperator-sample
+spec:
+  checkpointDirectory: /var/lib/kubelet/checkpoints
+  applyPoliciesImmediately: true
+  globalPolicy:
+    maxCheckpointsPerNamespace: 50
+    maxCheckpointsPerPod: 50
+    maxCheckpointsPerContainer: 50
+    # Opt the whole cluster into external-storage sync so that every
+    # successful checkpoint gets a CheckpointArchive record.
+    uploadToExternalStorage: true
+  # Point the checkpoint-syncer at the in-cluster MinIO instance deployed by
+  # test/minio.yaml.
+  externalStorage:
+    backend: s3
+    bucket: checkpoints
+    endpoint: http://minio.checkpoint-restore-operator:9000
+    region: us-east-1
+    secretRef:
+      name: checkpoint-storage-credentials

@@ -45,21 +45,26 @@ func runScheduledCheckpoints(ctx context.Context, c client.Client, creator Check
 	var created atomic.Int32
 	var wg sync.WaitGroup
 	for _, pod := range pods {
-		for _, c := range pod.Spec.Containers {
+		for _, container := range pod.Spec.Containers {
 			if len(containerSet) > 0 {
-				if _, ok := containerSet[c.Name]; !ok {
+				if _, ok := containerSet[container.Name]; !ok {
 					continue
 				}
 			}
 			wg.Add(1)
 			go func(ns, podName, containerName, nodeName string) {
 				defer wg.Done()
-				if _, err := creator.createCheckpoint(ctx, ns, podName, containerName, nodeName); err != nil {
+				path, err := creator.createCheckpoint(ctx, ns, podName, containerName, nodeName)
+				if err != nil {
 					logger.Error(err, "failed to create checkpoint", "pod", podName, "container", containerName)
 					return
 				}
 				created.Add(1)
-			}(pod.Namespace, pod.Name, c.Name, pod.Spec.NodeName)
+				if err := recordCheckpointArchiveIfEnabled(ctx, c, ns, podName, containerName, nodeName, path); err != nil {
+					logger.Error(err, "failed to record checkpoint archive for external storage",
+						"pod", podName, "container", containerName)
+				}
+			}(pod.Namespace, pod.Name, container.Name, pod.Spec.NodeName)
 		}
 	}
 	wg.Wait()

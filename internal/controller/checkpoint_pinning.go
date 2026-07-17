@@ -45,7 +45,9 @@ func removeArchiveUnlessPinned(log logr.Logger, archive string) {
 	}
 	if err := os.Remove(archive); err != nil {
 		log.Error(err, "removal of checkpoint archive failed", "archive", archive)
+		return
 	}
+	deleteCheckpointArchiveRecord(log, archive)
 }
 
 // partitionArchives splits archive paths into deletable and pinned slices.

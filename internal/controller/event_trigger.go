@@ -233,14 +233,19 @@ func (et *EventTrigger) checkpointPodContainers(ctx context.Context, pod *corev1
 
 	ok := true
 	for _, c := range filterContainers(*pod, et.schedule.Spec.ContainerNames) {
-		if _, err := et.creator.createCheckpoint(ctx, pod.Namespace, pod.Name, c.Name, pod.Spec.NodeName); err != nil {
+		path, err := et.creator.createCheckpoint(ctx, pod.Namespace, pod.Name, c.Name, pod.Spec.NodeName)
+		if err != nil {
 			logger.Error(err, "event trigger: checkpoint failed",
 				"pod", pod.Name, "container", c.Name, "reason", reason)
 			ok = false
-		} else {
-			logger.Info("event trigger: checkpoint created",
-				"pod", pod.Name, "container", c.Name,
-				"reason", reason)
+			continue
+		}
+		logger.Info("event trigger: checkpoint created",
+			"pod", pod.Name, "container", c.Name,
+			"reason", reason)
+		if err := recordCheckpointArchiveIfEnabled(ctx, et.client, pod.Namespace, pod.Name, c.Name, pod.Spec.NodeName, path); err != nil {
+			logger.Error(err, "event trigger: failed to record checkpoint archive",
+				"pod", pod.Name, "container", c.Name)
 		}
 	}
 	return ok

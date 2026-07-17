@@ -173,3 +173,28 @@ template time instead of deploying a pod stuck in ImagePullBackOff.
 {{- define "checkpoint-restore-operator.criProxy.image" -}}
 {{- include "checkpoint-restore-operator.imageRef" (list . .Values.criProxy.image) -}}
 {{- end }}
+
+{{- define "checkpoint-restore-operator.checkpointSyncer.name" -}}
+{{- include "checkpoint-restore-operator.fullnameWithSuffix" (list . "checkpoint-syncer") }}
+{{- end }}
+
+{{- define "checkpoint-restore-operator.checkpointSyncer.selectorLabels" -}}
+{{ include "checkpoint-restore-operator.selectorLabels" . }}
+app.kubernetes.io/component: checkpoint-syncer
+{{- end }}
+
+{{- define "checkpoint-restore-operator.checkpointSyncer.image" -}}
+{{- include "checkpoint-restore-operator.imageRef" (list . .Values.checkpointSyncer.image) -}}
+{{- end }}
+
+{{- define "checkpoint-restore-operator.checkpointSyncerRole.name" -}}
+{{- include "checkpoint-restore-operator.fullnameWithSuffix" (list . "checkpoint-syncer-role") }}
+{{- end }}
+
+{{- define "checkpoint-restore-operator.checkpointSyncerRoleBinding.name" -}}
+{{- include "checkpoint-restore-operator.fullnameWithSuffix" (list . "checkpoint-syncer-rolebinding") }}
+{{- end }}
+
+{{- define "checkpoint-restore-operator.checkpointSyncerSecretReader.name" -}}
+{{- include "checkpoint-restore-operator.fullnameWithSuffix" (list . "checkpoint-syncer-secret-reader") }}
+{{- end }}
