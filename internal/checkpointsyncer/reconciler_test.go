@@ -66,6 +66,12 @@ func mustConfigure() {
 }
 
 var _ = Describe("Reconciler", func() {
+	BeforeEach(func() {
+		if k8sClient == nil {
+			Skip("envtest environment not available")
+		}
+	})
+
 	It("uploads an archive on its origin node and sets status", func() {
 		mustConfigure()
 		f := &fakeStore{}

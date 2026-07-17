@@ -1,0 +1,10 @@
+{
+  // Reference tables and pre-formatted console/diagram blocks in the docs
+  // cannot be wrapped at 80 columns without corrupting them, so the 80-column
+  // limit (MD013) applies to ordinary prose only.
+  "MD013": {
+    "line_length": 80,
+    "tables": false,
+    "code_blocks": false
+  }
+}

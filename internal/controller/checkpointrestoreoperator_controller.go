@@ -222,13 +222,6 @@ func (r *CheckpointRestoreOperatorReconciler) handleGlobalPoliciesLocked(log log
 	}
 }
 
-func (r *CheckpointRestoreOperatorReconciler) handleSpecificPolicies(log logr.Logger, spec *criuorgv1.CheckpointRestoreOperatorSpec) {
-	policyMutex.Lock()
-	defer policyMutex.Unlock()
-
-	r.handleSpecificPoliciesLocked(log, spec)
-}
-
 func (r *CheckpointRestoreOperatorReconciler) handleSpecificPoliciesLocked(log logr.Logger, spec *criuorgv1.CheckpointRestoreOperatorSpec) {
 	// Clear existing policies before applying new ones
 	containerPolicies = nil

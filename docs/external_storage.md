@@ -43,7 +43,7 @@ The feature is built from four pieces:
    until the archive it needs reports that it is available locally on the
    target node.
 
-```
+```text
  checkpoint created ──► policy opts in? ──yes──► CheckpointArchive created
  (schedule / annotation /                          │
   event / resource /                               ▼
@@ -120,7 +120,7 @@ It is read **only** by the syncer — the controller-manager and cri-proxy never
 use these credentials.
 
 | Field | Required | Description |
-|-------|----------|-------------|
+| --- | --- | --- |
 | `backend` | yes | Storage backend. Only `s3` is supported (works with any S3-compatible endpoint). |
 | `bucket` | yes | Destination bucket for uploaded archives. |
 | `endpoint` | no | Overrides the default AWS endpoint — set this for MinIO or other S3-compatible providers. |
@@ -147,7 +147,7 @@ ckpt-web-app-nginx-bt48n           worker-1                                     
 ### Spec (set by the operator at creation)
 
 | Field | Description |
-|-------|-------------|
+| --- | --- |
 | `node` | Node the archive was created on and currently lives on. |
 | `localPath` | Absolute path of the `.tar` on the node's disk at creation time. Not re-validated later — the local GC remains the sole authority on whether the file still exists. |
 | `namespace` | Namespace of the source pod. |
@@ -158,7 +158,7 @@ ckpt-web-app-nginx-bt48n           worker-1                                     
 ### Status
 
 | Field | Description |
-|-------|-------------|
+| --- | --- |
 | `conditions[type=Uploaded]` | Whether the syncer has uploaded the archive to object storage. `False` until it has. |
 | `externalURI` | Object storage location (e.g. `s3://bucket/key.tar`) once uploaded. Empty until then. |
 | `availableNodes` | Nodes that currently hold a local copy of the archive. The origin node (`spec.node`) is listed at creation; a syncer appends its node after a successful download. The restore path waits until the target node appears here. |
@@ -198,7 +198,7 @@ identity (`kube-apiserver-kubelet-client`), whose default role
 `system:kubelet-api-admin` does **not** include the `nodes/checkpoint`
 subresource. Without an additional grant, every checkpoint fails with:
 
-```
+```text
 status 403: Forbidden (user=kube-apiserver-kubelet-client, verb=create,
 resource=nodes, subresource(s)=[checkpoint])
 ```
@@ -310,6 +310,22 @@ spec:
 For AWS S3, omit `endpoint` (or set it to the regional S3 endpoint) and point
 `secretRef` at a Secret holding a real IAM access key/secret key pair.
 
+When targeting a real S3 (or other production) backend, note:
+
+- **The bucket must already exist.** The syncer never creates it — the MinIO
+  fixture above creates the `checkpoints` bucket for you, but for AWS you must
+  create the bucket yourself, in the region you set in `region`. A missing or
+  mismatched region surfaces as a signing/redirect error on the first upload.
+- **Credential permissions.** The IAM identity behind the access key needs
+  `s3:PutObject`, `s3:GetObject`, and `s3:DeleteObject` on the bucket's objects
+  (`arn:aws:s3:::<bucket>/*`).
+- **Only static access keys are supported.** Credentials come exclusively from
+  the `accessKeyID`/`secretAccessKey` Secret keys; IAM Roles for Service
+  Accounts (IRSA), instance profiles, and STS are not (yet) wired up, so on EKS
+  you still supply a long-lived access key pair via the Secret.
+- **Transport security.** An empty or `https://` endpoint uses TLS; only an
+  explicit `http://` endpoint (as in the MinIO dev fixture) is plaintext.
+
 ### 4. Verify uploads and deletion
 
 After a checkpoint is created under an opted-in policy, watch its
@@ -362,8 +378,8 @@ fixture.
 - The **checkpoint-syncer** DaemonSet: uploads opted-in archives to the
   configured S3-compatible bucket and sets `Uploaded`/`externalURI`,
   downloads/stages archives onto a restore target node and appends its node to
-  `status.availableNodes`, and deletes the remote object (via a finalizer) when a
-  `CheckpointArchive` is deleted.
+  `status.availableNodes`, and deletes the remote object (via a finalizer)
+  when a `CheckpointArchive` is deleted.
 
 **Not yet implemented / out of scope for this release:**
 
