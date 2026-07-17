@@ -74,6 +74,26 @@ fsc_cleanup() {
   log_and_run kubectl delete pod "$pod" --ignore-not-found=true --timeout=60s
 }
 
+# mc_exec runs a one-shot minio/mc pod in the checkpoint-restore-operator
+# namespace, aliases it against the in-cluster MinIO deployed by
+# test/minio.yaml, and executes $1 against that alias. Returns the exit
+# status of the pod (0 only if the pod's container completed successfully),
+# so callers can use it to check whether an object exists in the bucket
+# (e.g. `mc_exec "mc stat local/checkpoints/<key>"`) without needing an `mc`
+# binary on the test runner itself.
+mc_exec() {
+  local cmd=$1
+  local pod="mc-check-$$-${RANDOM}"
+  kubectl run "$pod" -n checkpoint-restore-operator --restart=Never --image=minio/mc --command -- \
+    sh -c "mc alias set local http://minio.checkpoint-restore-operator:9000 minioadmin minioadmin >/dev/null 2>&1; $cmd" >&2
+  kubectl wait -n checkpoint-restore-operator --for=jsonpath='{.status.phase}'=Succeeded --timeout=60s "pod/$pod" >/dev/null 2>&1
+  local phase
+  phase=$(kubectl get pod -n checkpoint-restore-operator "$pod" -o jsonpath='{.status.phase}' 2>/dev/null)
+  kubectl logs -n checkpoint-restore-operator "$pod" >&2 2>/dev/null || true
+  kubectl delete pod -n checkpoint-restore-operator "$pod" --ignore-not-found=true --wait=false >/dev/null 2>&1
+  [ "$phase" = "Succeeded" ]
+}
+
 @test "test_garbage_collection" {
   log_and_run ls -la "$CHECKPOINT_DIR"
   [ "$status" -eq 0 ]
@@ -347,4 +367,92 @@ fsc_cleanup() {
   [[ "$msg" == *"md5"* ]]
 
   fsc_cleanup ./test/test_forensicsnapshotchain_integrity_invalid.yaml integrity-invalid-nginx
+}
+
+# Prerequisites for this test (see docs/external_storage.md):
+#   - kubelet checkpoint RBAC: kube-apiserver-kubelet-client must be granted
+#     `create` on `nodes/checkpoint` (docs/external_storage.md#prerequisites).
+#     Without it every checkpoint attempt 403s and no CheckpointArchive is
+#     ever created, so this test will time out waiting for one.
+#   - The checkpoint-syncer DaemonSet must be deployed and running, e.g.:
+#       helm upgrade --install checkpoint-restore-operator \
+#         ./charts/checkpoint-restore-operator \
+#         --set checkpointSyncer.enabled=true
+#     (build/load the checkpoint-syncer image into the cluster first).
+#   - The operator (controller-manager) running in the cluster must be built
+#     from this branch, so it understands spec.externalStorage and creates
+#     CheckpointArchive records for opted-in checkpoints.
+@test "test_external_storage_upload_and_delete_minio" {
+  # --- Deploy MinIO and create the "checkpoints" bucket ---
+  log_and_run kubectl apply -f ./test/minio.yaml
+  [ "$status" -eq 0 ]
+  log_and_run kubectl -n checkpoint-restore-operator rollout status deploy/minio --timeout=120s
+  [ "$status" -eq 0 ]
+  log_and_run kubectl -n checkpoint-restore-operator wait --for=condition=complete job/minio-create-bucket --timeout=120s
+  [ "$status" -eq 0 ]
+
+  # --- Configure the operator: point externalStorage at MinIO and opt every
+  # checkpoint in (globalPolicy.uploadToExternalStorage: true) ---
+  log_and_run kubectl apply -f ./test/test_externalstorage_checkpointrestoreoperator.yaml
+  [ "$status" -eq 0 ]
+
+  # --- Drive a checkpoint via the annotation trigger (mirrors
+  # test_checkpointschedule_annotation) ---
+  log_and_run kubectl apply -f ./test/test_checkpointschedule_pod.yaml
+  [ "$status" -eq 0 ]
+  log_and_run kubectl wait --for=condition=Ready --timeout=120s pod/schedule-test-pod
+  [ "$status" -eq 0 ]
+  log_and_run kubectl apply -f ./test/test_checkpointschedule.yaml
+  [ "$status" -eq 0 ]
+  log_and_run kubectl annotate pod schedule-test-pod checkpoint.criu.org/trigger=true --overwrite
+  [ "$status" -eq 0 ]
+
+  # --- Wait for a CheckpointArchive with a populated externalURI and an
+  # Uploaded=True condition ---
+  archive=""
+  uri=""
+  uploaded=""
+  for _ in $(seq 1 36); do
+    archive=$(kubectl get checkpointarchives -n default -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+    if [ -n "$archive" ]; then
+      uri=$(kubectl get checkpointarchive -n default "$archive" -o jsonpath='{.status.externalURI}' 2>/dev/null || true)
+      uploaded=$(kubectl get checkpointarchive -n default "$archive" -o jsonpath='{.status.conditions[?(@.type=="Uploaded")].status}' 2>/dev/null || true)
+      if [ -n "$uri" ] && [ "$uploaded" = "True" ]; then
+        break
+      fi
+    fi
+    sleep 5
+  done
+  echo "archive: $archive externalURI: $uri uploaded: $uploaded" >&2
+  [ -n "$archive" ]
+  [[ "$uri" == s3://* ]]
+  [ "$uploaded" = "True" ]
+
+  # --- Verify the object actually landed in the "checkpoints" bucket ---
+  key="${uri#s3://checkpoints/}"
+  log_and_run mc_exec "mc stat 'local/checkpoints/$key'"
+  [ "$status" -eq 0 ]
+
+  # --- Delete the CheckpointArchive; the syncer's delete finalizer must
+  # remove the object from the bucket before the CR itself disappears ---
+  log_and_run kubectl delete checkpointarchive -n default "$archive" --timeout=60s
+  [ "$status" -eq 0 ]
+
+  gone=""
+  for _ in $(seq 1 24); do
+    if ! kubectl get checkpointarchive -n default "$archive" >/dev/null 2>&1; then
+      if ! mc_exec "mc stat 'local/checkpoints/$key'" >/dev/null 2>&1; then
+        gone="yes"
+        break
+      fi
+    fi
+    sleep 5
+  done
+  echo "object+CR gone: $gone" >&2
+
+  log_and_run kubectl delete checkpointschedule schedule-test -n default --ignore-not-found=true
+  log_and_run kubectl delete pod schedule-test-pod -n default --ignore-not-found=true --timeout=60s
+  log_and_run kubectl delete -f ./test/minio.yaml --ignore-not-found=true
+
+  [ -n "$gone" ]
 }

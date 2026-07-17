@@ -17,13 +17,14 @@ The feature is **opt-in and non-disruptive**: until you enable it, nothing
 changes. Local checkpoint creation, retention/GC, and restore behave exactly as
 before for any checkpoint that is not matched by an opted-in policy.
 
-> **Status: groundwork.** This release ships the control-plane surface — the
-> `CheckpointArchive` CRD, the `uploadToExternalStorage` policy field, the
+> **Status: end to end.** This release ships both the control-plane surface —
+> the `CheckpointArchive` CRD, the `uploadToExternalStorage` policy field, the
 > `externalStorage` backend configuration, and the restore-side wait for
-> cross-node archives. The component that performs the actual upload/download
-> to object storage — the **checkpoint-syncer** — is not yet implemented.
-> Enabling the feature today records `CheckpointArchive` objects but does not
-> move any bytes to S3. See [What is and isn't implemented](#what-is-and-isnt-implemented).
+> cross-node archives — and the **checkpoint-syncer** component that performs
+> the actual upload/download/delete against S3-compatible object storage. The
+> syncer ships as an opt-in DaemonSet; see [Enabling the
+> syncer](#enabling-the-syncer) to deploy it. See [What is and isn't
+> implemented](#what-is-and-isnt-implemented) for the exact split.
 
 ## Architecture
 
@@ -46,12 +47,12 @@ The feature is built from four pieces:
  checkpoint created ──► policy opts in? ──yes──► CheckpointArchive created
  (schedule / annotation /                          │
   event / resource /                               ▼
-  forensic chain)                          checkpoint-syncer (future)
+  forensic chain)                          checkpoint-syncer (DaemonSet)
                                             uploads to S3, sets
                                             Uploaded / externalURI
  local file GC'd ──────────────────────────► matching CheckpointArchive deleted
 
- restore on node B ──► wait until archive LocalAvailable on B ──► render Pod
+ restore on node B ──► wait until node B in status.availableNodes ──► render Pod
 ```
 
 ## Enabling external storage
@@ -152,14 +153,15 @@ ckpt-web-app-nginx-bt48n           worker-1                                     
 | `namespace` | Namespace of the source pod. |
 | `pod` | Name of the source pod. |
 | `container` | Name of the source container. |
+| `requestedNodes` | Nodes that need a local copy staged for an imminent restore. `PodRestore` appends its target node; the syncer on each listed node downloads the archive locally. |
 
-### Status (set by the checkpoint-syncer)
+### Status
 
 | Field | Description |
 |-------|-------------|
-| `conditions[type=LocalAvailable]` | Whether the archive is present on local disk on `spec.node` right now. The restore path waits on this. |
 | `conditions[type=Uploaded]` | Whether the syncer has uploaded the archive to object storage. `False` until it has. |
 | `externalURI` | Object storage location (e.g. `s3://bucket/key.tar`) once uploaded. Empty until then. |
+| `availableNodes` | Nodes that currently hold a local copy of the archive. The origin node (`spec.node`) is listed at creation; a syncer appends its node after a successful download. The restore path waits until the target node appears here. |
 
 ### Lifecycle and garbage collection
 
@@ -174,16 +176,17 @@ both the local file and their `CheckpointArchive`. See
 
 When restoring, `PodRestore` may target a node other than the one the checkpoint
 was taken on (for example, the origin node is gone). If a `CheckpointArchive`
-tracks the checkpoint and names a **different** node than the restore target,
-the reconciler waits — reporting `WaitingForArchiveSync` — and does **not**
-render the restore Pod until the archive reports `LocalAvailable` on the target
-node. This prevents a restore from racing ahead of the syncer staging the file
-locally.
+tracks the checkpoint and the restore target is **not** listed in
+`status.availableNodes`, the reconciler appends the target to
+`spec.requestedNodes`, waits — reporting `WaitingForArchiveSync` — and does
+**not** render the restore Pod until the target node appears in
+`status.availableNodes`. This prevents a restore from racing ahead of the syncer
+staging the file locally.
 
 Restores are unaffected when:
 
 - no `CheckpointArchive` tracks the checkpoint (pure node-local flow), or
-- the archive already names the restore target node.
+- the restore target node is already in `status.availableNodes`.
 
 See [Restoring from a Checkpoint](restore.md) for the full restore flow.
 
@@ -229,6 +232,120 @@ subjects:
 This is a cluster prerequisite for checkpointing in general, not specific to
 external storage.
 
+## Enabling the syncer
+
+The checkpoint-syncer is the component that reads `CheckpointArchive` objects
+and actually moves bytes: it uploads newly created archives to the configured
+S3 bucket, deletes the object when the `CheckpointArchive` is deleted, and (on
+the target node during a cross-node restore) downloads the object back to
+local disk. It ships as a DaemonSet so an instance runs on every node — each
+instance only acts on archives whose `spec.node` matches its own node.
+
+### 1. Deploy the DaemonSet
+
+The DaemonSet is disabled by default and opt-in via the Helm chart:
+
+```bash
+# Build (and, for kind, load) the checkpoint-syncer image first.
+docker build -t checkpoint-syncer:dev -f Dockerfile.checkpoint-syncer .
+kind load docker-image checkpoint-syncer:dev
+
+helm upgrade --install checkpoint-restore-operator ./charts/checkpoint-restore-operator \
+  --namespace checkpoint-restore-operator --create-namespace \
+  --set checkpointSyncer.enabled=true \
+  --set checkpointSyncer.image.repository=checkpoint-syncer \
+  --set checkpointSyncer.image.tag=dev
+```
+
+Confirm it's running:
+
+```bash
+kubectl -n checkpoint-restore-operator get daemonset checkpoint-restore-operator-checkpoint-syncer
+```
+
+The syncer runs as root (`runAsUser: 0`, configurable via
+`checkpointSyncer.podSecurityContext`) because kubelet writes checkpoint
+archives as `root:root` with mode `0600`; the syncer must read them to upload
+and write them when staging a downloaded archive.
+
+### 2. Create the credentials Secret
+
+The syncer reads its S3 credentials from a `Secret` in its own namespace
+(`checkpoint-restore-operator` by default), with exactly two keys:
+
+```bash
+kubectl -n checkpoint-restore-operator create secret generic checkpoint-storage-credentials \
+  --from-literal=accessKeyID=<your-access-key-id> \
+  --from-literal=secretAccessKey=<your-secret-access-key>
+```
+
+The key names are fixed: `accessKeyID` and `secretAccessKey`.
+
+### 3. Point a MinIO (or any S3-compatible) backend at it
+
+For local/dev testing, `test/minio.yaml` deploys a single-instance MinIO
+server in the `checkpoint-restore-operator` namespace, a `checkpoints`
+bucket, and this same `checkpoint-storage-credentials` Secret
+(`minioadmin`/`minioadmin`):
+
+```bash
+kubectl apply -f test/minio.yaml
+```
+
+Then set `spec.externalStorage` on the `CheckpointRestoreOperator` (see
+[The `externalStorage` block](#the-externalstorage-block) above) to point at
+it:
+
+```yaml
+spec:
+  externalStorage:
+    backend: s3
+    bucket: checkpoints
+    endpoint: http://minio.checkpoint-restore-operator:9000
+    region: us-east-1
+    secretRef:
+      name: checkpoint-storage-credentials
+```
+
+For AWS S3, omit `endpoint` (or set it to the regional S3 endpoint) and point
+`secretRef` at a Secret holding a real IAM access key/secret key pair.
+
+### 4. Verify uploads and deletion
+
+After a checkpoint is created under an opted-in policy, watch its
+`CheckpointArchive`:
+
+```bash
+kubectl get checkpointarchive -n <namespace> <name> -o yaml
+```
+
+- `status.conditions[type=Uploaded].status` becomes `True` once the syncer has
+  uploaded the archive.
+- `status.externalURI` is populated with the object's location, e.g.
+  `s3://checkpoints/<namespace>/<pod>/<container>/<file>.tar`.
+
+To confirm the object is actually in the bucket (e.g. against the MinIO
+fixture above):
+
+```bash
+kubectl run mc --rm -it --restart=Never --image=minio/mc -n checkpoint-restore-operator -- \
+  sh -c "mc alias set local http://minio.checkpoint-restore-operator:9000 minioadmin minioadmin && \
+         mc ls -r local/checkpoints"
+```
+
+Deleting the `CheckpointArchive` (directly, or indirectly via local GC) drives
+the syncer's delete finalizer, which removes the object from the bucket
+before the finalizer is cleared and the CR disappears:
+
+```bash
+kubectl delete checkpointarchive -n <namespace> <name>
+# re-run `mc ls -r local/checkpoints` above — the object should be gone.
+```
+
+See `test/run_tests.bats` (`test_external_storage_upload_and_delete_minio`)
+for a full, scripted version of this flow against the `test/minio.yaml`
+fixture.
+
 ## What is and isn't implemented
 
 **Implemented now:**
@@ -239,15 +356,22 @@ external storage.
 - `uploadToExternalStorage` resolution across the policy hierarchy.
 - GC mirroring: deleting a local archive deletes its `CheckpointArchive`.
 - `externalStorage` configuration surface on `CheckpointRestoreOperator`.
-- Restore-side wait for a cross-node archive to become `LocalAvailable`.
+- Restore-side wait for a cross-node archive: the reconciler holds the restore
+  until the target node appears in `status.availableNodes` (requesting it via
+  `spec.requestedNodes`).
+- The **checkpoint-syncer** DaemonSet: uploads opted-in archives to the
+  configured S3-compatible bucket and sets `Uploaded`/`externalURI`,
+  downloads/stages archives onto a restore target node and appends its node to
+  `status.availableNodes`, and deletes the remote object (via a finalizer) when a
+  `CheckpointArchive` is deleted.
 
-**Not yet implemented:**
+**Not yet implemented / out of scope for this release:**
 
-- The **checkpoint-syncer** component that actually uploads archives to S3,
-  downloads/stages them onto other nodes, and sets the `Uploaded`,
-  `LocalAvailable`, and `externalURI` status. Until it exists, `externalStorage`
-  moves no data, `CheckpointArchive` status stays empty, and a cross-node
-  restore that depends on syncing will wait indefinitely.
-
-Enable `uploadToExternalStorage` today to start **recording** the archives that
-should be synced; wiring the syncer to those records is the next step.
+- Independent retention/lifecycle management of objects already uploaded to
+  remote storage (today, remote object lifecycle is driven entirely by local
+  GC deleting the matching `CheckpointArchive`).
+- Storage backends other than S3-compatible (`backend: s3` is the only
+  supported value).
+- A genuine multi-node download e2e in CI (kind runs a single node, so the
+  syncer's download/staging path is exercised by envtest rather than a live
+  cross-node kind restore).
