@@ -174,6 +174,43 @@ spec:
                         type: integer
                     type: object
                 type: object
+              volumeSnapshots:
+                description: |-
+                  volumeSnapshots optionally enables CSI VolumeSnapshot capture of the
+                  selected container's PVCs alongside each checkpoint. When nil or disabled,
+                  no volume snapshots are taken and behavior is unchanged.
+                properties:
+                  enabled:
+                    description: enabled turns on volume snapshotting for this checkpoint
+                      producer.
+                    type: boolean
+                  failurePolicy:
+                    default: BestEffort
+                    description: |-
+                      failurePolicy selects how a snapshot failure is handled: BestEffort
+                      (default) proceeds with the checkpoint and records the failure; Require
+                      aborts the round before the checkpoint call.
+                    enum:
+                    - BestEffort
+                    - Require
+                    type: string
+                  readyTimeout:
+                    description: |-
+                      readyTimeout is how long to wait for a created VolumeSnapshot to become
+                      readyToUse before moving on. Defaults to 60s.
+                    type: string
+                    x-kubernetes-validations:
+                    - message: readyTimeout must be at least 1s
+                      rule: duration(self) >= duration('1s')
+                  volumeSnapshotClassName:
+                    description: |-
+                      volumeSnapshotClassName optionally overrides the VolumeSnapshotClass used
+                      for the snapshots. When empty, the CSI driver's default
+                      VolumeSnapshotClass is used.
+                    type: string
+                required:
+                - enabled
+                type: object
             required:
             - namespace
             - selector

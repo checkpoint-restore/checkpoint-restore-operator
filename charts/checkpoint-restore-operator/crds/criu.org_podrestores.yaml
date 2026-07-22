@@ -8582,6 +8582,44 @@ spec:
                 x-kubernetes-validations:
                 - message: template is immutable
                   rule: self == oldSelf
+              volumeRestores:
+                description: |-
+                  volumeRestores optionally re-provisions template volumes from
+                  VolumeSnapshots captured at checkpoint time, so a restored container's
+                  open files resolve to the same content. Each entry names a template
+                  volume and the snapshot to provision its PVC from. Volumes not listed are
+                  used as-is. It is immutable.
+                items:
+                  description: |-
+                    VolumeRestore maps a template volume to the VolumeSnapshot a new PVC should
+                    be provisioned from before the restored Pod is created.
+                  properties:
+                    fromSnapshot:
+                      description: |-
+                        fromSnapshot is the name of the VolumeSnapshot to use as the data source
+                        for the new PersistentVolumeClaim.
+                      maxLength: 253
+                      minLength: 1
+                      type: string
+                    pvc:
+                      description: |-
+                        pvc is the name of the volume in the template whose PersistentVolumeClaim
+                        should be re-provisioned from a snapshot.
+                      maxLength: 253
+                      minLength: 1
+                      type: string
+                  required:
+                  - fromSnapshot
+                  - pvc
+                  type: object
+                maxItems: 32
+                type: array
+                x-kubernetes-list-map-keys:
+                - pvc
+                x-kubernetes-list-type: map
+                x-kubernetes-validations:
+                - message: volumeRestores is immutable
+                  rule: self == oldSelf
             required:
             - checkpoints
             - targetNode

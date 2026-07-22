@@ -95,6 +95,11 @@ type SnapshotChainRecord struct {
 	// chain, linking records into a tamper-evident sequence.
 	// +optional
 	PreviousSHA256Hash string `json:"previousSHA256Hash,omitempty"`
+	// volumeSnapshots records the CSI VolumeSnapshots captured alongside this
+	// checkpoint round, empty when volume snapshotting is disabled.
+	// +optional
+	// +listType=atomic
+	VolumeSnapshots []VolumeSnapshotRef `json:"volumeSnapshots,omitempty"`
 }
 
 // ForensicSnapshotChainSpec defines the desired state of ForensicSnapshotChain
@@ -118,6 +123,12 @@ type ForensicSnapshotChainSpec struct {
 	// integrity defines integrity verification
 	// +optional
 	Integrity IntegritySpec `json:"integrity,omitempty"`
+
+	// volumeSnapshots optionally enables CSI VolumeSnapshot capture of the
+	// selected container's PVCs alongside each checkpoint round. When nil or
+	// disabled, no volume snapshots are taken and behavior is unchanged.
+	// +optional
+	VolumeSnapshots *VolumeSnapshotConfig `json:"volumeSnapshots,omitempty"`
 
 	// postSnapshotAction is the action to take after the snapshot run completes.
 	// +optional

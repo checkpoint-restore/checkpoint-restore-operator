@@ -156,10 +156,20 @@ func (rt *ResourceTrigger) run(ctx context.Context) {
 			logger.Info("resource trigger: threshold exceeded, checkpointing",
 				"pod", pod.Name, "container", cm.Name, "reason", reason)
 
-			if _, err := rt.creator.createCheckpoint(ctx, pod.Namespace, pod.Name, cm.Name, pod.Spec.NodeName); err != nil {
+			// Snapshot this container's volumes before checkpointing it. Under
+			// Require, a snapshot failure skips the checkpoint (and does not
+			// record it as taken, so it retries after the cooldown).
+			refs, proceed := captureVolumeSnapshots(ctx, rt.client, rt.schedule.Spec.VolumeSnapshots, pod, []string{cm.Name})
+			if !proceed {
+				continue
+			}
+
+			path, err := rt.creator.createCheckpoint(ctx, pod.Namespace, pod.Name, cm.Name, pod.Spec.NodeName)
+			if err != nil {
 				logger.Error(err, "resource trigger: checkpoint failed", "pod", pod.Name, "container", cm.Name)
 				continue
 			}
+			linkSnapshotsToArchive(ctx, rt.client, pod.Namespace, refs, path)
 
 			rt.mu.Lock()
 			rt.lastCheckpoint[key] = time.Now()

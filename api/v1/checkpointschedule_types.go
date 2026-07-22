@@ -39,6 +39,12 @@ type CheckpointScheduleSpec struct {
 	// be combined.
 	// +required
 	Triggers TriggersSpec `json:"triggers"`
+
+	// volumeSnapshots optionally enables CSI VolumeSnapshot capture of the
+	// selected container's PVCs alongside each checkpoint. When nil or disabled,
+	// no volume snapshots are taken and behavior is unchanged.
+	// +optional
+	VolumeSnapshots *VolumeSnapshotConfig `json:"volumeSnapshots,omitempty"`
 }
 
 // TriggersSpec describes what initiates a checkpoint.

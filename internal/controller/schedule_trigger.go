@@ -21,6 +21,7 @@ import (
 	"sync/atomic"
 
 	v1 "github.com/checkpoint-restore/checkpoint-restore-operator/api/v1"
+	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
@@ -28,6 +29,12 @@ import (
 // runScheduledCheckpoints checkpoints the containers of all pods matching the
 // CheckpointSchedule concurrently and returns the number of checkpoints that
 // were created successfully. Failures are logged and skipped.
+//
+// When the schedule opts into volume snapshots, each matching pod's PVC-backed
+// volumes are snapshotted immediately before its containers are checkpointed, so
+// the disk snapshot is cut a moment before the memory image. Under
+// FailurePolicyRequire a snapshot failure skips the pod's checkpoints entirely,
+// so an archive is never produced without its volume snapshots.
 func runScheduledCheckpoints(ctx context.Context, c client.Client, creator Checkpointer, schedule *v1.CheckpointSchedule) int32 {
 	logger := log.FromContext(ctx)
 
@@ -44,13 +51,22 @@ func runScheduledCheckpoints(ctx context.Context, c client.Client, creator Check
 
 	var created atomic.Int32
 	var wg sync.WaitGroup
-	for _, pod := range pods {
-		for _, c := range pod.Spec.Containers {
-			if len(containerSet) > 0 {
-				if _, ok := containerSet[c.Name]; !ok {
-					continue
-				}
-			}
+	for i := range pods {
+		pod := pods[i]
+
+		selected := selectedContainerNames(&pod, containerSet)
+		if len(selected) == 0 {
+			continue
+		}
+
+		// Snapshot the pod's volumes before checkpointing any of its containers.
+		// Under Require, a snapshot failure skips this pod so no memory image is
+		// produced without a matching disk snapshot.
+		if _, proceed := captureVolumeSnapshots(ctx, c, schedule.Spec.VolumeSnapshots, &pod, selected); !proceed {
+			continue
+		}
+
+		for _, containerName := range selected {
 			wg.Add(1)
 			go func(ns, podName, containerName, nodeName string) {
 				defer wg.Done()
@@ -59,9 +75,24 @@ func runScheduledCheckpoints(ctx context.Context, c client.Client, creator Check
 					return
 				}
 				created.Add(1)
-			}(pod.Namespace, pod.Name, c.Name, pod.Spec.NodeName)
+			}(pod.Namespace, pod.Name, containerName, pod.Spec.NodeName)
 		}
 	}
 	wg.Wait()
 	return created.Load()
+}
+
+// selectedContainerNames returns the names of pod's containers that the schedule
+// targets. An empty containerSet selects every container.
+func selectedContainerNames(pod *corev1.Pod, containerSet map[string]struct{}) []string {
+	var names []string
+	for _, ctr := range pod.Spec.Containers {
+		if len(containerSet) > 0 {
+			if _, ok := containerSet[ctr.Name]; !ok {
+				continue
+			}
+		}
+		names = append(names, ctr.Name)
+	}
+	return names
 }

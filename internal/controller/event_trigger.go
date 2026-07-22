@@ -231,9 +231,25 @@ func (et *EventTrigger) checkpointOnce(ctx context.Context, pod *corev1.Pod, key
 func (et *EventTrigger) checkpointPodContainers(ctx context.Context, pod *corev1.Pod, reason string) bool {
 	logger := log.FromContext(ctx)
 
+	containers := filterContainers(*pod, et.schedule.Spec.ContainerNames)
+	containerNames := make([]string, 0, len(containers))
+	for _, c := range containers {
+		containerNames = append(containerNames, c.Name)
+	}
+
+	// Snapshot the pod's volumes before checkpointing any of its containers.
+	// Under Require, a snapshot failure skips the pod so the disruption
+	// checkpoint is retried on the next poll rather than produced without its
+	// volume snapshots.
+	refs, proceed := captureVolumeSnapshots(ctx, et.client, et.schedule.Spec.VolumeSnapshots, pod, containerNames)
+	if !proceed {
+		return false
+	}
+
 	ok := true
-	for _, c := range filterContainers(*pod, et.schedule.Spec.ContainerNames) {
-		if _, err := et.creator.createCheckpoint(ctx, pod.Namespace, pod.Name, c.Name, pod.Spec.NodeName); err != nil {
+	for _, c := range containers {
+		path, err := et.creator.createCheckpoint(ctx, pod.Namespace, pod.Name, c.Name, pod.Spec.NodeName)
+		if err != nil {
 			logger.Error(err, "event trigger: checkpoint failed",
 				"pod", pod.Name, "container", c.Name, "reason", reason)
 			ok = false
@@ -241,6 +257,7 @@ func (et *EventTrigger) checkpointPodContainers(ctx context.Context, pod *corev1
 			logger.Info("event trigger: checkpoint created",
 				"pod", pod.Name, "container", c.Name,
 				"reason", reason)
+			linkSnapshotsToArchive(ctx, et.client, pod.Namespace, refs, path)
 		}
 	}
 	return ok

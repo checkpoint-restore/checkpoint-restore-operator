@@ -67,12 +67,29 @@ func (at *AnnotationTrigger) run(ctx context.Context) {
 			continue
 		}
 
+		containers := filterContainers(pod, at.schedule.Spec.ContainerNames)
+		containerNames := make([]string, 0, len(containers))
+		for _, c := range containers {
+			containerNames = append(containerNames, c.Name)
+		}
+
+		// Snapshot the pod's volumes before checkpointing any of its containers.
+		// Under Require, a snapshot failure skips the pod (and keeps the
+		// annotation) so the request is retried rather than silently consumed.
+		refs, proceed := captureVolumeSnapshots(ctx, at.client, at.schedule.Spec.VolumeSnapshots, &pod, containerNames)
+		if !proceed {
+			continue
+		}
+
 		failed := false
-		for _, c := range filterContainers(pod, at.schedule.Spec.ContainerNames) {
-			if _, err := at.creator.createCheckpoint(ctx, pod.Namespace, pod.Name, c.Name, pod.Spec.NodeName); err != nil {
+		for _, c := range containers {
+			path, err := at.creator.createCheckpoint(ctx, pod.Namespace, pod.Name, c.Name, pod.Spec.NodeName)
+			if err != nil {
 				logger.Error(err, "annotation trigger: checkpoint failed", "pod", pod.Name, "container", c.Name)
 				failed = true
+				continue
 			}
+			linkSnapshotsToArchive(ctx, at.client, pod.Namespace, refs, path)
 		}
 
 		// keep the annotation when a checkpoint failed, so the request is

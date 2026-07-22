@@ -129,6 +129,23 @@ type ContainerCheckpoint struct {
 	Path string `json:"path"`
 }
 
+// VolumeRestore maps a template volume to the VolumeSnapshot a new PVC should
+// be provisioned from before the restored Pod is created.
+type VolumeRestore struct {
+	// pvc is the name of the volume in the template whose PersistentVolumeClaim
+	// should be re-provisioned from a snapshot.
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	PVC string `json:"pvc"`
+	// fromSnapshot is the name of the VolumeSnapshot to use as the data source
+	// for the new PersistentVolumeClaim.
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	FromSnapshot string `json:"fromSnapshot"`
+}
+
 // PodRestoreSpec defines the desired state of PodRestore.
 type PodRestoreSpec struct {
 	// targetNode is the node that holds the checkpoint archives. The restored Pod
@@ -161,6 +178,18 @@ type PodRestoreSpec struct {
 	// +required
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="template is immutable"
 	Template corev1.PodTemplateSpec `json:"template"`
+
+	// volumeRestores optionally re-provisions template volumes from
+	// VolumeSnapshots captured at checkpoint time, so a restored container's
+	// open files resolve to the same content. Each entry names a template
+	// volume and the snapshot to provision its PVC from. Volumes not listed are
+	// used as-is. It is immutable.
+	// +optional
+	// +listType=map
+	// +listMapKey=pvc
+	// +kubebuilder:validation:MaxItems=32
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="volumeRestores is immutable"
+	VolumeRestores []VolumeRestore `json:"volumeRestores,omitempty"`
 }
 
 // Condition types for a PodRestore. Following Kubernetes API conventions, the
