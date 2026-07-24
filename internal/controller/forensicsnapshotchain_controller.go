@@ -62,6 +62,9 @@ type ForensicSnapshotChainReconciler struct {
 	// Checkpointer overrides the default kubelet-proxy checkpoint creator;
 	// used by tests.
 	Checkpointer Checkpointer
+
+	// SigningSecretNamespace is the namespace of the signing secret.
+	SigningSecretNamespace string
 }
 
 func (r *ForensicSnapshotChainReconciler) checkpointer() Checkpointer {
@@ -202,6 +205,27 @@ func (r *ForensicSnapshotChainReconciler) Reconcile(ctx context.Context, req ctr
 		}
 		hashingEnabled := chain.Spec.Integrity.HashAlgorithm == "sha256"
 
+		// If signing is enabled but hashing is not, the chain should fail.
+		// This is to prevent the chain from completing without hashing.
+		if signingEnabled(chain) && !hashingEnabled {
+			sigErr := fmt.Errorf("forensic signature requires integrity.hashAlgorithm: sha256")
+			if err := r.updateChainStatus(ctx, chain, func(latest *criuorgv1.ForensicSnapshotChain) {
+				latest.Status.Phase = criuorgv1.PhaseFailed
+				latest.Status.ErrorMessage = sigErr.Error()
+				failNow := metav1.Now()
+				latest.Status.CompletionTime = &failNow
+				meta.SetStatusCondition(&latest.Status.Conditions, metav1.Condition{
+					Type:               "Ready",
+					Status:             metav1.ConditionFalse,
+					Reason:             "Failed",
+					Message:            sigErr.Error(),
+					LastTransitionTime: metav1.Now(),
+				})
+			}); err != nil {
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{}, sigErr
+		}
 		// MaxDuration backstop. Checked once per reconcile, before the capture
 		// round and independent of how many pods match, so an idle or
 		// mis-targeted chain still terminates.
@@ -242,6 +266,7 @@ func (r *ForensicSnapshotChainReconciler) Reconcile(ctx context.Context, req ctr
 							LastTransitionTime: metav1.Now(),
 						},
 					)
+					r.applyManifestSigning(ctx, latest)
 				}); err != nil {
 					return ctrl.Result{}, err
 				}
@@ -454,6 +479,7 @@ func (r *ForensicSnapshotChainReconciler) Reconcile(ctx context.Context, req ctr
 					},
 				)
 				appendRoundRecords(latest, newRecords, hashingEnabled, integrityFailed, integrityMessage)
+				r.applyManifestSigning(ctx, latest)
 			}); err != nil {
 				return ctrl.Result{}, err
 			}
@@ -606,4 +632,46 @@ func (r *ForensicSnapshotChainReconciler) executePostSnapshotAction(
 	}
 
 	return nil
+}
+
+// function to sign the manifest containing indexed entries of the snapshot chain
+func (r *ForensicSnapshotChainReconciler) applyManifestSigning(
+	ctx context.Context,
+	latest *criuorgv1.ForensicSnapshotChain,
+) {
+	if !signingEnabled(latest) {
+		return
+	}
+
+	manifest, err := buildManifest(latest)
+	if err != nil {
+		setSignatureCondition(latest, false, "ManifestBuildFailed", err.Error())
+		return
+	}
+
+	sig, keyID, err := r.signManifest(ctx, latest.Spec.Integrity.ForensicSignature, manifest)
+	if err != nil {
+		setSignatureCondition(latest, false, "SigningFailed", err.Error())
+		return
+	}
+
+	latest.Status.Manifest = string(manifest)
+	latest.Status.ManifestSignature = sig
+	latest.Status.ManifestSignatureKeyID = keyID
+	setSignatureCondition(latest, true, "SigningSucceeded", "manifest signed with detached GPG signature")
+}
+
+func setSignatureCondition(chain *criuorgv1.ForensicSnapshotChain, ok bool, reason, msg string) {
+	cond := metav1.Condition{
+		Type:               "SignatureVerified",
+		Reason:             reason,
+		Message:            msg,
+		LastTransitionTime: metav1.Now(),
+	}
+	if ok {
+		cond.Status = metav1.ConditionTrue
+	} else {
+		cond.Status = metav1.ConditionFalse
+	}
+	meta.SetStatusCondition(&chain.Status.Conditions, cond)
 }
