@@ -1,0 +1,11 @@
+apiVersion: criu.org/v1
+kind: WorkloadCheckpoint
+metadata:
+  name: web-snapshot
+  namespace: default
+spec:
+  targetRef:
+    kind: Deployment
+    name: web
+  # containerNames: []        # empty = all containers
+  failurePolicy: BestEffort

@@ -180,6 +180,14 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "PodRestore")
 		os.Exit(1)
 	}
+	if err := (&controller.WorkloadCheckpointReconciler{
+		Client:     mgr.GetClient(),
+		Scheme:     mgr.GetScheme(),
+		RestConfig: mgr.GetConfig(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "WorkloadCheckpoint")
+		os.Exit(1)
+	}
 	//+kubebuilder:scaffold:builder
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
