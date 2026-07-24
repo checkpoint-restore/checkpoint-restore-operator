@@ -44,12 +44,31 @@ rules:
   verbs:
   - get
 - apiGroups:
+  - apps
+  resources:
+  - deployments
+  - replicasets
+  - statefulsets
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - batch
+  resources:
+  - jobs
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
   - criu.org
   resources:
   - checkpointrestoreoperators
   - checkpointschedules
   - forensicsnapshotchains
   - podrestores
+  - workloadcheckpoints
   verbs:
   - create
   - delete
@@ -65,6 +84,7 @@ rules:
   - checkpointschedules/finalizers
   - forensicsnapshotchains/finalizers
   - podrestores/finalizers
+  - workloadcheckpoints/finalizers
   verbs:
   - update
 - apiGroups:
@@ -74,6 +94,7 @@ rules:
   - checkpointschedules/status
   - forensicsnapshotchains/status
   - podrestores/status
+  - workloadcheckpoints/status
   verbs:
   - get
   - patch
