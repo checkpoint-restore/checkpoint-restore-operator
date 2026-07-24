@@ -46,6 +46,8 @@ func addKnownTypes(scheme *runtime.Scheme) error {
 		&ForensicSnapshotChainList{},
 		&PodRestore{},
 		&PodRestoreList{},
+		&WorkloadCheckpoint{},
+		&WorkloadCheckpointList{},
 	)
 	metav1.AddToGroupVersion(scheme, GroupVersion)
 	return nil
