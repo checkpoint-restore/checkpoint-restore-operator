@@ -166,4 +166,3 @@ checkpoint machinery:
 * Its `status.checkpoints` (per replica: node + archive path) is the metadata a
   future workload-level restore would consume; restoring a single archive today
   is done with [`PodRestore`](restore.md).
-```
