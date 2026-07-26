@@ -125,7 +125,7 @@ type WorkloadCheckpointStatus struct {
 	// +listMapKey=type
 	// +patchStrategy=merge
 	// +patchMergeKey=type
-	Conditions []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type"`
+	Conditions []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type" protobuf:"bytes,1,rep,name=conditions"`
 	// phase is the current high-level state of the run.
 	// +optional
 	Phase WorkloadCheckpointPhase `json:"phase,omitempty"`
