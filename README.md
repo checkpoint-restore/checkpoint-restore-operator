@@ -112,6 +112,32 @@ Checkpoint archives are written by the kubelet to
 are subject to the retention policy configured with the
 `CheckpointRestoreOperator` resource described above.
 
+## Checkpointing a Whole Workload
+
+To checkpoint an entire `Job`, `Deployment`, or `StatefulSet` as a coherent
+group, use the `WorkloadCheckpoint` custom resource. You name the workload and
+the operator resolves the pods it owns (via `ownerReferences`), checkpoints
+their containers, and records for every replica which archive landed on which
+node.
+
+```yaml
+apiVersion: criu.org/v1
+kind: WorkloadCheckpoint
+metadata:
+  name: web-snapshot
+  namespace: default
+spec:
+  targetRef:
+    kind: Deployment   # Job | Deployment | StatefulSet
+    name: web
+  failurePolicy: BestEffort
+```
+
+It is one-shot (a single snapshot of the workload at reconcile time) and reuses
+the same kubelet checkpoint path as `CheckpointSchedule`. See
+[docs/workload-checkpoint.md](docs/workload-checkpoint.md) for the full
+reference.
+
 ## Restoring from a Checkpoint
 
 The operator can also restore a checkpointed container as an ordinary Pod,
