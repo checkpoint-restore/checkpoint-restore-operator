@@ -84,7 +84,7 @@ spec:
                     properties:
                       enabled:
                         description: |-
-                          Enables manifest generation & detached GPG signing at snapshotchain completion
+                          enabled enables manifest generation & detached GPG signing at snapshotchain completion
                           Requires integrity.hashAlgorithm to be set
                         type: boolean
                       secretKey:
