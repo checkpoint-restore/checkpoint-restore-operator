@@ -74,6 +74,29 @@ fsc_cleanup() {
   log_and_run kubectl delete pod "$pod" --ignore-not-found=true --timeout=60s
 }
 
+# Operator namespace used by make deploy / config/default.
+fsc_operator_namespace() {
+  echo "${FSC_OPERATOR_NAMESPACE:-checkpoint-restore-operator}"
+}
+
+# Install the forensic signing Secret in the operator namespace for e2e tests.
+fsc_deploy_signing_secret() {
+  local ns
+  ns=$(fsc_operator_namespace)
+  log_and_run ./test/generate_forensic_signing_key.sh
+  log_and_run kubectl delete secret forensic-signing-key -n "$ns" --ignore-not-found=true
+  log_and_run kubectl create secret generic forensic-signing-key \
+    -n "$ns" \
+    --from-file=signing-key=./test/data/forensic-signing-key.asc
+}
+
+fsc_cleanup_signing_secret() {
+  local ns
+  ns=$(fsc_operator_namespace)
+  log_and_run kubectl delete secret forensic-signing-key -n "$ns" --ignore-not-found=true
+  rm -f ./test/data/forensic-signing-key.asc ./test/data/forensic-signing-key.pub.asc
+}
+
 @test "test_garbage_collection" {
   log_and_run ls -la "$CHECKPOINT_DIR"
   [ "$status" -eq 0 ]
@@ -347,4 +370,44 @@ fsc_cleanup() {
   [[ "$msg" == *"md5"* ]]
 
   fsc_cleanup ./test/test_forensicsnapshotchain_integrity_invalid.yaml integrity-invalid-nginx
+}
+
+
+@test "test_forensicsnapshotchain_signature" {
+  fsc_deploy_nginx_pod signature-nginx
+  fsc_deploy_signing_secret
+  log_and_run kubectl apply -f ./test/test_forensicsnapshotchain_signature.yaml
+  fsc_wait_for_phase signature-test Completed
+
+  count=$(kubectl get forensicsnapshotchain signature-test -o jsonpath='{.status.snapshotCount}')
+  echo "snapshotCount: $count" >&2
+  [ "$count" -ge 1 ]
+
+  integrity=$(kubectl get forensicsnapshotchain signature-test -o jsonpath='{.status.conditions[?(@.type=="IntegrityVerified")].status}')
+  [ "$integrity" = "True" ]
+
+  signature=$(kubectl get forensicsnapshotchain signature-test -o jsonpath='{.status.conditions[?(@.type=="SignatureVerified")].status}')
+  [ "$signature" = "True" ]
+
+  reason=$(kubectl get forensicsnapshotchain signature-test -o jsonpath='{.status.conditions[?(@.type=="SignatureVerified")].reason}')
+  [ "$reason" = "SigningSucceeded" ]
+
+  manifest=$(kubectl get forensicsnapshotchain signature-test -o jsonpath='{.status.manifest}')
+  [ -n "$manifest" ]
+
+  manifest_sig=$(kubectl get forensicsnapshotchain signature-test -o jsonpath='{.status.manifestSignature}')
+  [ -n "$manifest_sig" ]
+
+  key_id=$(kubectl get forensicsnapshotchain signature-test -o jsonpath='{.status.manifestSignatureKeyID}')
+  [ -n "$key_id" ]
+
+  if command -v gpg >/dev/null 2>&1; then
+    kubectl get forensicsnapshotchain signature-test -o jsonpath='{.status.manifest}' >"$TEST_TMPDIR/manifest.yaml"
+    kubectl get forensicsnapshotchain signature-test -o jsonpath='{.status.manifestSignature}' | base64 -d >"$TEST_TMPDIR/manifest.yaml.sig"
+    log_and_run gpg --batch --import ./test/data/forensic-signing-key.pub.asc
+    log_and_run gpg --batch --verify "$TEST_TMPDIR/manifest.yaml.sig" "$TEST_TMPDIR/manifest.yaml"
+  fi
+
+  fsc_cleanup ./test/test_forensicsnapshotchain_signature.yaml signature-nginx
+  fsc_cleanup_signing_secret
 }
