@@ -169,6 +169,19 @@ docker-build-cri-proxy: ## Build docker image for the node-side CRI proxy.
 docker-push-cri-proxy: ## Push the CRI proxy docker image.
 	$(CONTAINER_TOOL) push ${CRI_PROXY_IMG}
 
+NODE_AGENT_IMG ?= node-agent:latest
+.PHONY: build-node-agent
+build-node-agent: ## Build the node-side coordinator node-agent binary.
+	go build -o bin/node-agent cmd/nodeagent/main.go
+
+.PHONY: docker-build-node-agent
+docker-build-node-agent: ## Build docker image for the node-agent.
+	$(CONTAINER_TOOL) build -f Dockerfile.node-agent -t ${NODE_AGENT_IMG} .
+
+.PHONY: docker-push-node-agent
+docker-push-node-agent: ## Push the node-agent docker image.
+	$(CONTAINER_TOOL) push ${NODE_AGENT_IMG}
+
 # PLATFORMS defines the target platforms for  the manager image be build to provide support to multiple
 # architectures. (i.e. make docker-buildx IMG=myregistry/mypoperator:0.0.1). To use this option you need to:
 # - able to use docker buildx . More info: https://docs.docker.com/build/buildx/
