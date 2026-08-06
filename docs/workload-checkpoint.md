@@ -52,9 +52,10 @@ reflects the pods that actually exist.
 reconcile time, and then stops. Recurring or triggered checkpointing is the
 job of [`CheckpointSchedule`](checkpoint-schedules.md).
 
-**Not globally atomic.** Pods are checkpointed one after another, so the group
-snapshot is *crash-consistent per pod*, not a single instant across all
-replicas.
+**Not globally atomic by default.** Pods are checkpointed one after another, so
+the group snapshot is *crash-consistent per pod*, not a single instant across
+all replicas. Set `spec.coordinated: true` to instead rendezvous every member
+at a barrier — see [Coordinated checkpointing](#coordinated-checkpointing).
 
 ## Prerequisites
 
@@ -101,6 +102,87 @@ web-snapshot   Deployment   web      Completed   3
 * `failurePolicy` (optional) — `BestEffort` (default) checkpoints what it can
   and reports per-pod failures; `AllOrNothing` fails the whole run if any pod
   fails.
+* `coordinated` (optional, default `false`) — checkpoint all resolved members
+  together at the criu-coordinator barrier instead of one after another. See
+  [Coordinated checkpointing](#coordinated-checkpointing).
+
+## Coordinated checkpointing
+
+By default the members of a workload are checkpointed independently, one after
+another. For a workload whose pods hold **open connections to each other**
+(a distributed database, a message queue, tightly-coupled services), that is
+not enough: if pod A is dumped seconds before pod B, an in-flight message
+between them can be lost or duplicated on restore. `spec.coordinated: true`
+solves this by dumping every member at the same instant, mediated by
+[`criu-coordinator`](https://github.com/checkpoint-restore/criu-coordinator).
+
+When `coordinated` is set the operator:
+
+1. Resolves the workload's containers and builds a **full-mesh dependency map**
+   (every member depends on every other), keyed by CRI container ID.
+2. Delivers that map to each involved node's **node-agent**, which writes it to
+   `/etc/criu/criu-coordinator.json` on the node host. The map carries the
+   coordinator Service's numeric **ClusterIP** — the CRIU client runs on the
+   node host and cannot resolve cluster DNS.
+3. Fires all members **concurrently**. Each member's CRIU action-script blocks
+   at the barrier until every peer has arrived, then the coordinator server
+   releases them together.
+4. Clears the node map when the run finishes.
+
+```text
+operator ──WriteMap(HTTP)──▶ node-agent ──▶ /etc/criu/criu-coordinator.json
+   │                                            ▲
+   └── fire all members concurrently            │ read by the action-script
+              │                                  │
+              ▼                                  │
+      kubelet checkpoint API ─▶ CRIU ─▶ criu-coordinator client
+                                                 │
+                                                 ▼
+                          criu-coordinator server (barrier, ClusterIP)
+```
+
+**Group-atomic.** Coordinated runs are always all-or-nothing regardless of
+`failurePolicy`: if any member cannot reach the barrier the whole run fails
+(`phase: Failed`, reason `CoordinatedGroupFailed`). A map-delivery failure
+fails the run *before* any member is fired.
+
+### Additional prerequisites
+
+Coordinated checkpointing needs the components installed by the chart when
+`coordinated.enabled=true`:
+
+* the **criu-coordinator server** (a Deployment + ClusterIP Service) that acts
+  as the barrier;
+* the privileged **node-agent DaemonSet**, which installs the CRIU
+  action-script and writes/clears the per-run dependency map on each node;
+* the `criu-coordinator` binary present at `/usr/local/bin/criu-coordinator` on
+  every node, built with
+  [PR #26](https://github.com/checkpoint-restore/criu-coordinator/pull/26) so
+  that containers not part of a group are treated as non-participants rather
+  than aborting their dump.
+
+```console
+$ helm install cro charts/checkpoint-restore-operator \
+    --set image.tag=<tag> \
+    --set coordinated.enabled=true \
+    --set coordinated.coordinator.image.tag=<tag> \
+    --set coordinated.nodeAgent.image.tag=<tag>
+```
+
+### Example
+
+```yaml
+apiVersion: criu.org/v1
+kind: WorkloadCheckpoint
+metadata:
+  name: db-snapshot
+  namespace: default
+spec:
+  targetRef:
+    kind: StatefulSet
+    name: db
+  coordinated: true
+```
 
 ## Reading the result
 
@@ -131,8 +213,9 @@ status:
   checkpointed.
 * `PartiallyFailed` — `BestEffort`: some pods failed; per-pod errors are in
   `status.checkpoints`.
-* `Failed` — `AllOrNothing` and a pod failed, or the workload could not be
-  resolved (see the `Ready` condition's `reason`/`message`).
+* `Failed` — `AllOrNothing` and a pod failed, a coordinated run lost a member
+  at the barrier (`reason: CoordinatedGroupFailed`), or the workload could not
+  be resolved (see the `Ready` condition's `reason`/`message`).
 
 The `checkpoints` list is written incrementally and pods already recorded are
 skipped, so a controller restart mid-run does not re-checkpoint completed pods.
