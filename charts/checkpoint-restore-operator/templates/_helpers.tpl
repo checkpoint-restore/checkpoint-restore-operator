@@ -135,6 +135,24 @@ annotation privilege to every pod using it.
 app.kubernetes.io/component: cri-proxy
 {{- end }}
 
+{{- define "checkpoint-restore-operator.coordinator.name" -}}
+{{- include "checkpoint-restore-operator.fullnameWithSuffix" (list . "coordinator") }}
+{{- end }}
+
+{{- define "checkpoint-restore-operator.coordinator.selectorLabels" -}}
+{{ include "checkpoint-restore-operator.selectorLabels" . }}
+app.kubernetes.io/component: coordinator
+{{- end }}
+
+{{- define "checkpoint-restore-operator.nodeAgent.name" -}}
+{{- include "checkpoint-restore-operator.fullnameWithSuffix" (list . "coordinator-agent") }}
+{{- end }}
+
+{{- define "checkpoint-restore-operator.nodeAgent.selectorLabels" -}}
+{{ include "checkpoint-restore-operator.selectorLabels" . }}
+app.kubernetes.io/component: coordinator-agent
+{{- end }}
+
 {{/*
 Derive the container port from a bind address such as ":8443" or
 "127.0.0.1:8080", so the port cannot drift from the address the manager
@@ -172,4 +190,20 @@ template time instead of deploying a pod stuck in ImagePullBackOff.
 
 {{- define "checkpoint-restore-operator.criProxy.image" -}}
 {{- include "checkpoint-restore-operator.imageRef" (list . .Values.criProxy.image) -}}
+{{- end }}
+
+{{- define "checkpoint-restore-operator.coordinator.image" -}}
+{{- include "checkpoint-restore-operator.imageRef" (list . .Values.coordinated.coordinator.image) -}}
+{{- end }}
+
+{{- define "checkpoint-restore-operator.nodeAgent.image" -}}
+{{- include "checkpoint-restore-operator.imageRef" (list . .Values.coordinated.nodeAgent.image) -}}
+{{- end }}
+
+{{/*
+The label selector string the operator passes to --agent-selector to find
+node-agent pods. Must stay in sync with nodeAgent.selectorLabels.
+*/}}
+{{- define "checkpoint-restore-operator.nodeAgent.selectorString" -}}
+app.kubernetes.io/name={{ include "checkpoint-restore-operator.name" . }},app.kubernetes.io/instance={{ .Release.Name }},app.kubernetes.io/component=coordinator-agent
 {{- end }}

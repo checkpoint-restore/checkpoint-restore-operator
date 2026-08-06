@@ -1,0 +1,58 @@
+{{- if .Values.coordinated.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "checkpoint-restore-operator.coordinator.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "checkpoint-restore-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: coordinator
+spec:
+  replicas: {{ .Values.coordinated.coordinator.replicas }}
+  selector:
+    matchLabels:
+      {{- include "checkpoint-restore-operator.coordinator.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "checkpoint-restore-operator.coordinator.selectorLabels" . | nindent 8 }}
+        {{- with .Values.coordinated.coordinator.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.coordinated.coordinator.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.coordinated.coordinator.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.coordinated.coordinator.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.coordinated.coordinator.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: server
+          image: {{ include "checkpoint-restore-operator.coordinator.image" . | quote }}
+          imagePullPolicy: {{ .Values.coordinated.coordinator.image.pullPolicy }}
+          args:
+            - server
+            - --address=0.0.0.0
+            - --port={{ .Values.coordinated.port }}
+            - --wait-timeout={{ .Values.coordinated.waitTimeout }}
+          ports:
+            - name: barrier
+              containerPort: {{ .Values.coordinated.port }}
+              protocol: TCP
+          resources:
+            {{- toYaml .Values.coordinated.coordinator.resources | nindent 12 }}
+{{- end }}
