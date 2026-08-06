@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"sync"
 
 	meta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -40,6 +41,13 @@ type WorkloadCheckpointReconciler struct {
 	Checkpointer Checkpointer
 	// Resolver overrides the default owner-based pod resolver; used by tests.
 	Resolver *WorkloadResolver
+	// Agent delivers the coordinator dependency map to nodes (coordinated runs).
+	Agent NodeAgentClient
+	// CoordinatorAddr is the numeric ClusterIP of the coordinator Service,
+	// written into node maps (nodes cannot resolve cluster DNS).
+	CoordinatorAddr string
+	// CoordinatorPort is the coordinator server port (default "8080").
+	CoordinatorPort string
 }
 
 func (r *WorkloadCheckpointReconciler) checkpointer() Checkpointer {
@@ -60,6 +68,7 @@ func (r *WorkloadCheckpointReconciler) resolver() *WorkloadResolver {
 // +kubebuilder:rbac:groups=criu.org,resources=workloadcheckpoints/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=criu.org,resources=workloadcheckpoints/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch
 // +kubebuilder:rbac:groups=apps,resources=deployments;replicasets;statefulsets,verbs=get;list;watch
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch
 
@@ -124,6 +133,10 @@ func (r *WorkloadCheckpointReconciler) toRunning(ctx context.Context, wc *criuor
 // crash-consistent per pod, not globally consistent across replicas.
 func (r *WorkloadCheckpointReconciler) runCheckpoints(ctx context.Context, wc *criuorgv1.WorkloadCheckpoint) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
+
+	if wc.Spec.Coordinated {
+		return r.runCoordinatedCheckpoints(ctx, wc)
+	}
 
 	pods, err := r.resolver().ResolvePods(ctx, wc.Namespace, wc.Spec.TargetRef)
 	if err != nil {
@@ -200,6 +213,149 @@ func (r *WorkloadCheckpointReconciler) runCheckpoints(ctx context.Context, wc *c
 		latest.Status.CompletionTime = &now
 		meta.SetStatusCondition(&latest.Status.Conditions, metav1.Condition{
 			Type: "Ready", Status: status, Reason: reason, Message: message, LastTransitionTime: metav1.Now(),
+		})
+	})
+}
+
+// runCoordinatedCheckpoints checkpoints all resolved members together at the
+// criu-coordinator barrier: it builds a full-mesh dependency map, delivers it
+// to every involved node's agent, fires all members concurrently, and clears
+// the node maps afterwards. Coordinated runs are group-atomic (AllOrNothing).
+func (r *WorkloadCheckpointReconciler) runCoordinatedCheckpoints(ctx context.Context, wc *criuorgv1.WorkloadCheckpoint) (ctrl.Result, error) {
+	log := logf.FromContext(ctx)
+
+	pods, err := r.resolver().ResolvePods(ctx, wc.Namespace, wc.Spec.TargetRef)
+	if err != nil {
+		return ctrl.Result{}, r.failCoordinated(ctx, wc, "ResolveFailed", err.Error())
+	}
+
+	depMap, members, err := buildCoordinationMap(pods, wc.Spec.ContainerNames)
+	if err != nil {
+		return ctrl.Result{}, r.failCoordinated(ctx, wc, "MapBuildFailed", err.Error())
+	}
+	if len(members) == 0 {
+		return ctrl.Result{}, r.failCoordinated(ctx, wc, "NoMembers", "no running containers to coordinate")
+	}
+
+	port := r.CoordinatorPort
+	if port == "" {
+		port = "8080"
+	}
+	cfg := CoordinatorConfig{Address: r.CoordinatorAddr, Port: port, Dependencies: depMap}
+
+	// Nodes involved in this group.
+	nodes := map[string]bool{}
+	for _, m := range members {
+		nodes[m.NodeName] = true
+	}
+
+	// Deliver the map to every involved node; always clear on the way out so a
+	// stale map never lingers (even on failure).
+	defer func() {
+		for node := range nodes {
+			if cerr := r.Agent.ClearMap(context.WithoutCancel(ctx), node); cerr != nil {
+				log.Error(cerr, "failed to clear coordinator map", "node", node)
+			}
+		}
+	}()
+	for node := range nodes {
+		if werr := r.Agent.WriteMap(ctx, node, cfg); werr != nil {
+			return ctrl.Result{}, r.failCoordinated(ctx, wc, "MapWriteFailed", "node "+node+": "+werr.Error())
+		}
+	}
+
+	// Fire all members concurrently so they rendezvous at the barrier.
+	creator := r.checkpointer()
+	type result struct {
+		member coordMember
+		path   string
+		err    error
+	}
+	results := make([]result, len(members))
+	var wg sync.WaitGroup
+	for i, m := range members {
+		wg.Add(1)
+		go func(i int, m coordMember) {
+			defer wg.Done()
+			path, cerr := creator.createCheckpoint(ctx, wc.Namespace, m.PodName, m.ContainerName, m.NodeName)
+			results[i] = result{member: m, path: path, err: cerr}
+		}(i, m)
+	}
+	wg.Wait()
+
+	// Aggregate per pod. Coordinated runs are group-atomic (AllOrNothing).
+	recByPod := map[string]*criuorgv1.PodCheckpointRecord{}
+	var order []string
+	for _, res := range results {
+		rec := recByPod[res.member.PodName]
+		if rec == nil {
+			rec = &criuorgv1.PodCheckpointRecord{
+				PodName: res.member.PodName, NodeName: res.member.NodeName, ReplicaKey: res.member.PodName,
+			}
+			recByPod[res.member.PodName] = rec
+			order = append(order, res.member.PodName)
+		}
+		cr := criuorgv1.ContainerCheckpointRecord{Container: res.member.ContainerName}
+		if res.err != nil {
+			cr.Error = res.err.Error()
+			log.Error(res.err, "coordinated checkpoint failed", "pod", res.member.PodName, "container", res.member.ContainerName)
+		} else {
+			cr.Path = res.path
+			cr.CheckpointTime = metav1.Now()
+		}
+		rec.Containers = append(rec.Containers, cr)
+	}
+
+	var records []criuorgv1.PodCheckpointRecord
+	for _, name := range order {
+		records = append(records, *recByPod[name])
+	}
+	failedPods := countFailedPods(recByPod)
+
+	phase := criuorgv1.WorkloadPhaseCompleted
+	reason, message, status := "AllPodsCheckpointed", "coordinated group checkpointed", metav1.ConditionTrue
+	if failedPods > 0 {
+		phase, reason, message, status = criuorgv1.WorkloadPhaseFailed, "CoordinatedGroupFailed",
+			"one or more members failed the coordinated barrier", metav1.ConditionFalse
+	}
+
+	checkpointedPods := len(order) - failedPods
+	return ctrl.Result{}, r.updateStatus(ctx, wc, func(latest *criuorgv1.WorkloadCheckpoint) {
+		latest.Status.Checkpoints = append(latest.Status.Checkpoints, records...)
+		latest.Status.ResolvedPodCount = int32(len(pods))
+		latest.Status.CheckpointedPodCount += int32(checkpointedPods)
+		latest.Status.FailedPodCount += int32(failedPods)
+		latest.Status.Phase = phase
+		now := metav1.Now()
+		latest.Status.CompletionTime = &now
+		meta.SetStatusCondition(&latest.Status.Conditions, metav1.Condition{
+			Type: "Ready", Status: status, Reason: reason, Message: message, LastTransitionTime: metav1.Now(),
+		})
+	})
+}
+
+// countFailedPods counts pods that had at least one container fail.
+func countFailedPods(recByPod map[string]*criuorgv1.PodCheckpointRecord) int {
+	n := 0
+	for _, rec := range recByPod {
+		for _, c := range rec.Containers {
+			if c.Error != "" {
+				n++
+				break
+			}
+		}
+	}
+	return n
+}
+
+// failCoordinated marks a coordinated run terminally Failed with the given reason.
+func (r *WorkloadCheckpointReconciler) failCoordinated(ctx context.Context, wc *criuorgv1.WorkloadCheckpoint, reason, msg string) error {
+	return r.updateStatus(ctx, wc, func(latest *criuorgv1.WorkloadCheckpoint) {
+		latest.Status.Phase = criuorgv1.WorkloadPhaseFailed
+		now := metav1.Now()
+		latest.Status.CompletionTime = &now
+		meta.SetStatusCondition(&latest.Status.Conditions, metav1.Condition{
+			Type: "Ready", Status: metav1.ConditionFalse, Reason: reason, Message: msg, LastTransitionTime: metav1.Now(),
 		})
 	})
 }
