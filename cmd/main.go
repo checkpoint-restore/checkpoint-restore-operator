@@ -17,6 +17,7 @@ limitations under the License.
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"flag"
 	"os"
@@ -25,11 +26,13 @@ import (
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
@@ -60,8 +63,19 @@ func main() {
 	var enableHTTP2 bool
 	var restoreCheckpointDir string
 	var restoreAllowCrossNamespace bool
+	var coordinatorService, agentNamespace, agentSelector, coordinatorPort string
+	var agentPort int
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
+	flag.StringVar(&coordinatorService, "coordinator-service", "criu-coordinator",
+		"Name of the criu-coordinator Service whose ClusterIP the node maps point at for coordinated checkpoints.")
+	flag.StringVar(&agentNamespace, "agent-namespace", os.Getenv("POD_NAMESPACE"),
+		"Namespace the coordinator Service and node-agent DaemonSet live in.")
+	flag.StringVar(&agentSelector, "agent-selector", "app=criu-coordinator-agent",
+		"Label selector that resolves the node-agent pod on each node.")
+	flag.StringVar(&coordinatorPort, "coordinator-port", "8080",
+		"Port the criu-coordinator server listens on for the barrier.")
+	flag.IntVar(&agentPort, "agent-port", 9700, "Port the node-agent HTTP API listens on.")
 	flag.StringVar(&restoreCheckpointDir, "restore-checkpoint-dir", criuorgv1.DefaultCheckpointDir,
 		"The only directory PodRestore specs may reference checkpoint archives in. "+
 			"Must match the directory the kubelet writes checkpoints to (and the CRI proxy's --checkpoint-dir).")
@@ -178,6 +192,34 @@ func main() {
 		AllowCrossNamespace: restoreAllowCrossNamespace,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "PodRestore")
+		os.Exit(1)
+	}
+	// Resolve the coordinator Service ClusterIP for coordinated checkpoints. The
+	// host cannot resolve cluster DNS, so the node maps must carry a numeric IP
+	// that kube-proxy routes to the coordinator server. COORDINATOR_ADDR overrides
+	// for local/dev runs where the Service lookup is unavailable.
+	coordAddr := os.Getenv("COORDINATOR_ADDR")
+	if coordAddr == "" && agentNamespace != "" {
+		svc := &corev1.Service{}
+		key := client.ObjectKey{Namespace: agentNamespace, Name: coordinatorService}
+		if err := mgr.GetAPIReader().Get(context.Background(), key, svc); err != nil {
+			setupLog.Info("coordinator Service not found; coordinated checkpoints disabled until it exists",
+				"service", key.String(), "error", err.Error())
+		} else {
+			coordAddr = svc.Spec.ClusterIP
+			setupLog.Info("resolved coordinator Service ClusterIP", "service", key.String(), "addr", coordAddr)
+		}
+	}
+
+	if err := (&controller.WorkloadCheckpointReconciler{
+		Client:          mgr.GetClient(),
+		Scheme:          mgr.GetScheme(),
+		RestConfig:      mgr.GetConfig(),
+		Agent:           controller.NewHTTPNodeAgentClient(mgr.GetClient(), agentNamespace, agentSelector, agentPort),
+		CoordinatorAddr: coordAddr,
+		CoordinatorPort: coordinatorPort,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "WorkloadCheckpoint")
 		os.Exit(1)
 	}
 	//+kubebuilder:scaffold:builder

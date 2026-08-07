@@ -1,0 +1,78 @@
+{{- if .Values.coordinated.enabled }}
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "checkpoint-restore-operator.nodeAgent.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "checkpoint-restore-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: coordinator-agent
+spec:
+  selector:
+    matchLabels:
+      {{- include "checkpoint-restore-operator.nodeAgent.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "checkpoint-restore-operator.nodeAgent.selectorLabels" . | nindent 8 }}
+        {{- with .Values.coordinated.nodeAgent.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.coordinated.nodeAgent.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.coordinated.nodeAgent.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      {{- with .Values.coordinated.nodeAgent.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.coordinated.nodeAgent.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.coordinated.nodeAgent.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: agent
+          image: {{ include "checkpoint-restore-operator.nodeAgent.image" . | quote }}
+          imagePullPolicy: {{ .Values.coordinated.nodeAgent.image.pullPolicy }}
+          args:
+            - --listen=:{{ .Values.coordinated.nodeAgent.port }}
+            - --config-path={{ .Values.coordinated.nodeAgent.etcCriuDir }}/criu-coordinator.json
+            - --default-conf={{ .Values.coordinated.nodeAgent.etcCriuDir }}/default.conf
+            - --script-path={{ .Values.coordinated.nodeAgent.binDir }}/criu-coordinator
+          ports:
+            - name: api
+              containerPort: {{ .Values.coordinated.nodeAgent.port }}
+              protocol: TCP
+          {{- with .Values.coordinated.nodeAgent.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.coordinated.nodeAgent.resources | nindent 12 }}
+          volumeMounts:
+            - name: etc-criu
+              mountPath: {{ .Values.coordinated.nodeAgent.etcCriuDir }}
+            - name: host-bin
+              mountPath: {{ .Values.coordinated.nodeAgent.binDir }}
+      volumes:
+        - name: etc-criu
+          hostPath:
+            path: {{ .Values.coordinated.nodeAgent.etcCriuDir }}
+            type: DirectoryOrCreate
+        - name: host-bin
+          hostPath:
+            path: {{ .Values.coordinated.nodeAgent.binDir }}
+            type: DirectoryOrCreate
+{{- end }}

@@ -4,4 +4,5 @@ resources:
 - criu_v1_checkpointschedule.yaml
 - v1_forensicsnapshotchain.yaml
 - criu_v1_podrestore.yaml
+- criu_v1_workloadcheckpoint.yaml
 #+kubebuilder:scaffold:manifestskustomizesamples

@@ -1,0 +1,25 @@
+# Build the node-agent binary (manages node-local criu-coordinator files for
+# coordinated WorkloadCheckpoint runs).
+FROM golang:latest AS builder
+ARG TARGETOS
+ARG TARGETARCH
+
+WORKDIR /workspace
+COPY go.mod go.mod
+COPY go.sum go.sum
+# This repository vendors its dependencies; build from vendor/ for reproducibility.
+COPY vendor/ vendor/
+COPY cmd/nodeagent/ cmd/nodeagent/
+COPY internal/ internal/
+COPY api/ api/
+
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} \
+    go build -mod=vendor -a -o node-agent cmd/nodeagent/main.go
+
+# Distroless static base. Runs as root because it writes /etc/criu on the host;
+# the DaemonSet sets privileged.
+FROM gcr.io/distroless/static:latest
+WORKDIR /
+COPY --from=builder /workspace/node-agent .
+
+ENTRYPOINT ["/node-agent"]

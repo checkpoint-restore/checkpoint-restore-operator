@@ -1,0 +1,18 @@
+{{- if .Values.coordinated.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "checkpoint-restore-operator.coordinator.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "checkpoint-restore-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: coordinator
+spec:
+  selector:
+    {{- include "checkpoint-restore-operator.coordinator.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: barrier
+      port: {{ .Values.coordinated.port }}
+      targetPort: barrier
+      protocol: TCP
+{{- end }}

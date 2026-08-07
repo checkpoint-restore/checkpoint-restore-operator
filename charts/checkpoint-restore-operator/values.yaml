@@ -100,6 +100,67 @@ operator:
   extraVolumeMounts: []
   extraVolumes: []
 
+# Coordinated workload checkpointing: a single criu-coordinator server acts as
+# the barrier, and a privileged node-agent DaemonSet manages the node-local
+# coordinator files (/etc/criu). Requires a criu-coordinator binary with PR #26
+# on each node at /usr/local/bin/criu-coordinator.
+coordinated:
+  enabled: false
+
+  # Port the criu-coordinator server listens on for the barrier.
+  port: 8080
+  # wait-timeout (seconds) the server allows for all members to rendezvous.
+  waitTimeout: 60
+
+  coordinator:
+    replicas: 1
+    image:
+      registry: ""
+      repository: criu/checkpoint-restore-operator-coordinator
+      # Defaults to v<.Chart.AppVersion>. Override for locally built images.
+      tag: ""
+      pullPolicy: IfNotPresent
+    resources:
+      requests:
+        cpu: 10m
+        memory: 32Mi
+      limits:
+        memory: 128Mi
+    podAnnotations: {}
+    podLabels: {}
+    nodeSelector: {}
+    tolerations: []
+    affinity: {}
+
+  nodeAgent:
+    # Port the node-agent HTTP API listens on.
+    port: 9700
+    image:
+      registry: ""
+      repository: criu/checkpoint-restore-operator-node-agent
+      # Defaults to v<.Chart.AppVersion>. Override for locally built images.
+      tag: ""
+      pullPolicy: IfNotPresent
+    # Node-local paths the agent manages via hostPath.
+    etcCriuDir: /etc/criu
+    binDir: /usr/local/bin
+    securityContext:
+      privileged: true
+      runAsUser: 0
+    resources:
+      requests:
+        cpu: 10m
+        memory: 32Mi
+      limits:
+        memory: 64Mi
+    priorityClassName: system-node-critical
+    podAnnotations: {}
+    podLabels: {}
+    nodeSelector: {}
+    tolerations:
+      - operator: Exists
+    affinity: {}
+
 rbac:
   create: true
   metricsAuth:

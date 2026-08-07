@@ -71,6 +71,12 @@ spec:
             {{- if .Values.operator.enableHTTP2 }}
             - --enable-http2
             {{- end }}
+            {{- if .Values.coordinated.enabled }}
+            - --coordinator-service={{ include "checkpoint-restore-operator.coordinator.name" . }}
+            - --coordinator-port={{ .Values.coordinated.port }}
+            - --agent-selector={{ include "checkpoint-restore-operator.nodeAgent.selectorString" . }}
+            - --agent-port={{ .Values.coordinated.nodeAgent.port }}
+            {{- end }}
             {{- range .Values.operator.extraArgs }}
             - {{ . | quote }}
             {{- end }}
@@ -87,10 +93,14 @@ spec:
           envFrom:
             {{- toYaml . | nindent 12 }}
           {{- end }}
-          {{- with .Values.operator.extraEnv }}
           env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            {{- with .Values.operator.extraEnv }}
             {{- toYaml . | nindent 12 }}
-          {{- end }}
+            {{- end }}
           livenessProbe:
             httpGet:
               path: {{ .Values.operator.healthProbe.liveness.path }}

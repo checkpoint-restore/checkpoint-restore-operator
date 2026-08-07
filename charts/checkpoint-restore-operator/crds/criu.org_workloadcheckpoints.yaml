@@ -1,0 +1,266 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.21.0
+  name: workloadcheckpoints.criu.org
+spec:
+  group: criu.org
+  names:
+    kind: WorkloadCheckpoint
+    listKind: WorkloadCheckpointList
+    plural: workloadcheckpoints
+    singular: workloadcheckpoint
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.targetRef.kind
+      name: Kind
+      type: string
+    - jsonPath: .spec.targetRef.name
+      name: Target
+      type: string
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.checkpointedPodCount
+      name: Pods
+      type: integer
+    name: v1
+    schema:
+      openAPIV3Schema:
+        description: WorkloadCheckpoint is the Schema for the workloadcheckpoints
+          API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: spec defines the desired state of WorkloadCheckpoint
+            properties:
+              containerNames:
+                description: |-
+                  containerNames restricts checkpointing to specific containers.
+                  Empty means all containers of each pod.
+                items:
+                  type: string
+                type: array
+                x-kubernetes-list-type: atomic
+              coordinated:
+                default: false
+                description: |-
+                  coordinated checkpoints all resolved members together at the
+                  criu-coordinator barrier instead of independently. Coordinated runs are
+                  group-atomic: any member that cannot reach the barrier fails the whole
+                  run, regardless of failurePolicy.
+                type: boolean
+              failurePolicy:
+                default: BestEffort
+                description: failurePolicy controls how a per-pod checkpoint failure
+                  affects the run.
+                enum:
+                - BestEffort
+                - AllOrNothing
+                type: string
+              targetRef:
+                description: |-
+                  targetRef identifies the workload whose pods will be checkpointed.
+                  It is immutable: a WorkloadCheckpoint targets one workload for its lifetime.
+                properties:
+                  apiVersion:
+                    description: |-
+                      apiVersion is the workload apiVersion (e.g. apps/v1, batch/v1). Optional;
+                      defaulted per kind by the controller when empty.
+                    type: string
+                  kind:
+                    description: kind is the workload kind to checkpoint.
+                    enum:
+                    - Job
+                    - Deployment
+                    - StatefulSet
+                    type: string
+                  name:
+                    description: name is the workload object name, in the same namespace
+                      as this resource.
+                    minLength: 1
+                    type: string
+                required:
+                - kind
+                - name
+                type: object
+                x-kubernetes-validations:
+                - message: targetRef is immutable
+                  rule: self == oldSelf
+            required:
+            - targetRef
+            type: object
+          status:
+            description: status defines the observed state of WorkloadCheckpoint
+            properties:
+              checkpointedPodCount:
+                description: checkpointedPodCount is how many pods had all selected
+                  containers checkpointed.
+                format: int32
+                type: integer
+              checkpoints:
+                description: checkpoints is the coherent group snapshot, one entry
+                  per pod.
+                items:
+                  description: PodCheckpointRecord records the outcome for one pod
+                    (one workload replica).
+                  properties:
+                    containers:
+                      description: containers holds the per-container checkpoint results
+                        for this pod.
+                      items:
+                        description: ContainerCheckpointRecord records the outcome
+                          for one container.
+                        properties:
+                          checkpointTime:
+                            description: checkpointTime is when this container was
+                              checkpointed.
+                            format: date-time
+                            type: string
+                          container:
+                            description: container is the container name.
+                            type: string
+                          error:
+                            description: error holds the failure message for this
+                              container, if any.
+                            type: string
+                          path:
+                            description: path is the checkpoint archive path on the
+                              node (empty if this container failed).
+                            type: string
+                        required:
+                        - container
+                        type: object
+                      type: array
+                      x-kubernetes-list-type: atomic
+                    nodeName:
+                      description: nodeName is the node the pod (and its archives)
+                        live on.
+                      type: string
+                    podName:
+                      description: podName is the pod that was checkpointed.
+                      type: string
+                    replicaKey:
+                      description: |-
+                        replicaKey identifies the replica within the workload (the pod name, which
+                        encodes the ordinal for StatefulSets).
+                      type: string
+                  required:
+                  - podName
+                  type: object
+                type: array
+                x-kubernetes-list-type: atomic
+              completionTime:
+                description: completionTime is when the run reached a terminal phase.
+                format: date-time
+                type: string
+              conditions:
+                description: conditions represent the latest observations of the run
+                  state (type "Ready").
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              failedPodCount:
+                description: failedPodCount is how many pods had at least one container
+                  fail.
+                format: int32
+                type: integer
+              observedGeneration:
+                description: observedGeneration is the most recent generation observed
+                  by the controller.
+                format: int64
+                type: integer
+              phase:
+                description: phase is the current high-level state of the run.
+                type: string
+              resolvedPodCount:
+                description: resolvedPodCount is how many owned Running pods were
+                  resolved.
+                format: int32
+                type: integer
+              startTime:
+                description: startTime is when the resource entered the Pending phase.
+                format: date-time
+                type: string
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
