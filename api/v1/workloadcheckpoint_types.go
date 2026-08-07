@@ -82,12 +82,12 @@ type WorkloadCheckpointSpec struct {
 	// +default="BestEffort"
 	FailurePolicy WorkloadCheckpointFailurePolicy `json:"failurePolicy,omitempty"`
 
-	// coordinated, when true, checkpoints all resolved members together at the
+	// coordinated checkpoints all resolved members together at the
 	// criu-coordinator barrier instead of independently. Coordinated runs are
 	// group-atomic: any member that cannot reach the barrier fails the whole
 	// run, regardless of failurePolicy.
 	// +optional
-	// +kubebuilder:default=false
+	// +default=false
 	Coordinated bool `json:"coordinated,omitempty"`
 }
 
