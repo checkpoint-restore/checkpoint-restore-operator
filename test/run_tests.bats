@@ -304,7 +304,7 @@ fsc_cleanup() {
 @test "test_forensicsnapshotchain_post_snapshot_delete_pod" {
   fsc_deploy_nginx_pod fsc-delete-nginx
   log_and_run kubectl apply -f ./test/test_forensicsnapshotchain_postsnapshotaction_deletepod.yaml
-  fsc_wait_for_phase max-snapshots-test Completed
+  fsc_wait_for_phase delete-pod-test Completed
 
   # Pod should be gone after chain completes
   run kubectl get pod fsc-delete-nginx
