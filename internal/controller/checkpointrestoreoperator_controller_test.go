@@ -352,14 +352,21 @@ var _ = Describe("handleCheckpointsForLevel - checkpoint pinning", func() {
 		Expect(small).To(BeAnExistingFile())
 	})
 
-	It("deletes only unpinned orphans when RetainOrphan is false", func() {
-		// With RetainOrphan=false and no matching resource in the cluster (the
-		// unit-test environment has no in-cluster config, so the lookup reports
-		// the resource as absent), the orphan-cleanup path runs. Pinned
-		// archives must be skipped; unpinned ones must be deleted.
+	It("preserves all archives when RetainOrphan=false and the cluster API is unreachable", func() {
+		// When RetainOrphan=false, the controller calls resourceExistsInCluster
+		// to determine whether the container is still running before deleting
+		// orphaned checkpoints. In the unit-test environment there is no
+		// in-cluster config, so the API call always returns an error.
+		//
+		// A transient API error must NOT cause a mass deletion: an
+		// unreachable control-plane must be treated as "unknown, keep
+		// everything" rather than "resource gone, delete all".
+		//
+		// Before the fix this test fails because the error is logged but
+		// execution falls through into the !exist deletion branch.
 		base := ts(1)
 		pinnedPath := makeCheckpointArchive(dir, "mypod", "default", "mycontainer", base, 1024, true)
-		deletablePath := makeCheckpointArchive(dir, "mypod", "default", "mycontainer", base.Add(time.Second), 1024, false)
+		unpinnedPath := makeCheckpointArchive(dir, "mypod", "default", "mycontainer", base.Add(time.Second), 1024, false)
 
 		policy := Policy{
 			RetainOrphan:      false,
@@ -370,8 +377,50 @@ var _ = Describe("handleCheckpointsForLevel - checkpoint pinning", func() {
 
 		handleCheckpointsForLevel(devNull, details, "container", policy)
 
+		// Both archives must survive: the API error means we cannot confirm
+		// the resource is absent, so deletion would risk data loss.
 		Expect(pinnedPath).To(BeAnExistingFile())
-		Expect(deletablePath).NotTo(BeAnExistingFile())
+		Expect(unpinnedPath).To(BeAnExistingFile())
+	})
+
+	It("does not log stat errors for count-deleted archives during size-based GC", func() {
+		// After count-based GC removes an archive from disk, the size-based GC
+		// phase still holds that archive in its deletableCandidates list and
+		// calls os.Stat on it (inside the sort comparator). Because the file no
+		// longer exists, os.Stat returns an error that propagates to the log.
+		//
+		// A well-behaved GC must not produce log errors for files it has already
+		// successfully deleted in the same GC cycle. Before the fix,
+		// sink.errorCount > 0 because the sort inside selectArchivesToDelete
+		// (BySize) calls os.Stat on the already-deleted a1.
+		sink := &recordingLogSink{}
+		log := logr.New(sink)
+
+		base := ts(1)
+		// a1 is the only excess archive (MaxCheckpoints=2, 3 archives total).
+		// After count-GC deletes a1, the stale deletableCandidates list fed to
+		// the size phase still contains a1, triggering Stat errors in the sort.
+		a1 := makeCheckpointArchive(dir, "mypod", "default", "mycontainer", base, 2*1024*1024, false)
+		a2 := makeCheckpointArchive(dir, "mypod", "default", "mycontainer", base.Add(time.Second), 1024*1024, false)
+		a3 := makeCheckpointArchive(dir, "mypod", "default", "mycontainer", base.Add(2*time.Second), 1024*1024, false)
+
+		policy := Policy{
+			RetainOrphan:      true,
+			MaxCheckpoints:    2,
+			MaxCheckpointSize: resource.MustParse("100Gi"),
+			// 4 MiB total triggers size-GC: stale totalSize (4Mi) > limit, even
+			// though real remaining total (a2+a3=2Mi) is within the limit.
+			MaxTotalSize: resource.MustParse("3Mi"),
+		}
+
+		handleCheckpointsForLevel(log, details, "container", policy)
+
+		Expect(a1).NotTo(BeAnExistingFile()) // removed by count phase
+		Expect(a2).To(BeAnExistingFile())    // must survive
+		Expect(a3).To(BeAnExistingFile())    // must survive
+		// No stat errors should be logged: count-deleted archives must be
+		// removed from the size phase's candidate list before it runs.
+		Expect(sink.errorCount).To(Equal(0), "stat errors logged for already-deleted archives")
 	})
 
 	It("skips archives with unreadable metadata during retention scans without logging errors", func() {

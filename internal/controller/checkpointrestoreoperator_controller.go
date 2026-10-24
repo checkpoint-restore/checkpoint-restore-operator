@@ -710,7 +710,13 @@ func (policies policySnapshot) handleCheckpointsForLevel(log logr.Logger, detail
 	if !policy.RetainOrphan {
 		exist, err := resourceExistsInCluster(level, details)
 		if err != nil {
-			log.Error(err, "failed to check if resource exists in cluster", "level", level)
+			// A transient API error (network partition, token expiration, etc.)
+			// must NOT trigger mass deletion: we cannot distinguish "resource
+			// gone" from "API unavailable". Return early and preserve all
+			// checkpoints until the next reconciliation cycle when the API
+			// may be reachable again.
+			log.Error(err, "failed to check if resource exists in cluster; skipping orphan deletion to prevent data loss on transient API errors", "level", level)
+			return
 		}
 
 		if !exist {
@@ -795,6 +801,26 @@ func (policies policySnapshot) handleCheckpointsForLevel(log logr.Logger, detail
 		}
 	} else {
 		clearRetentionUnreachable(countKey)
+	}
+
+	// Sync deletableCandidates and totalSize to reflect what the count phase
+	// actually removed. The size phase below calls os.Stat inside its sort
+	// comparator: stale entries for already-deleted archives cause stat errors,
+	// pollute the log, and can skew sort order, risking incorrect deletion of
+	// surviving archives.
+	{
+		var alive []string
+		for _, c := range deletableCandidates {
+			if _, statErr := os.Stat(c); statErr == nil {
+				alive = append(alive, c)
+			} else {
+				// Archive was removed by the count phase; drop it from accounting.
+				currentSize := resource.NewQuantity(archiveSizes[c], resource.BinarySI)
+				totalSize.Sub(*currentSize)
+				delete(archiveSizes, c)
+			}
+		}
+		deletableCandidates = alive
 	}
 
 	// Handle total size against maxTotalSize.

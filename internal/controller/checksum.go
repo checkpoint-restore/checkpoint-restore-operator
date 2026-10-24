@@ -58,7 +58,7 @@ func computeChecksum(ctx context.Context, c client.Client, clientSet *kubernetes
 				{
 					Name:    "checksum-helper",
 					Image:   "alpine:latest",
-					Command: []string{"sh", "-c", "sha256sum " + snapshotPath},
+					Command: []string{"sha256sum", snapshotPath},
 					VolumeMounts: []corev1.VolumeMount{
 						{
 							Name:      "checkpoints-volume",
