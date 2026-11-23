@@ -162,3 +162,47 @@ criProxy:
       memory: 64Mi
     limits:
       memory: 128Mi
+
+# The checkpoint-store agent runs on every node and moves checkpoint archives
+# to and from the object storage set in a CheckpointRestoreOperator's
+# spec.storage. It runs the operator image. Give both its service account and
+# the manager's the storage provider's credentials, for example through
+# workload identity annotations: the manager reads manifests and enforces
+# retention of stored snapshots.
+checkpointStoreAgent:
+  enabled: false
+  serviceAccount:
+    annotations: {}
+  # Directory on the node, outside the checkpoint directory, where the agent
+  # records which archives it uploaded and downloaded.
+  stateDirectory: /var/lib/checkpoint-store-agent
+  scanInterval: 15s
+  settleTime: 10s
+  health:
+    bindAddress: ":8082"
+  priorityClassName: ""
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations:
+    - operator: Exists
+  affinity: {}
+  securityContext:
+    runAsUser: 0
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop:
+        - ALL
+      add:
+        - DAC_OVERRIDE
+        - FOWNER
+    seccompProfile:
+      type: RuntimeDefault
+  resources:
+    requests:
+      cpu: 25m
+      memory: 96Mi
+    limits:
+      # An S3 upload holds one 64 MiB part in memory.
+      memory: 256Mi

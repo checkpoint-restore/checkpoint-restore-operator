@@ -246,6 +246,46 @@ spec:
                   type: object
                 type: array
                 x-kubernetes-list-type: atomic
+              storage:
+                description: |-
+                  storage keeps a copy of every checkpoint archive in object storage, so
+                  that it outlives its node and can be restored on any other. The
+                  checkpoint-store agent on each node uploads new archives and
+                  downloads stored ones for a PodRestore; the operator enforces the
+                  stored copies' retention. Unset keeps checkpoints on their nodes only.
+                properties:
+                  location:
+                    description: |-
+                      location is the storage location URL: s3://bucket/root, with optional
+                      region and endpoint query parameters; gs://bucket/root; or
+                      azblob://container/root with an account or endpoint query parameter.
+                      Credentials come from the provider's default chain in the agent's and
+                      the operator's environment, such as workload identity.
+                    maxLength: 2048
+                    minLength: 1
+                    type: string
+                    x-kubernetes-validations:
+                    - message: location must be an s3://, gs:// or azblob:// URL
+                      rule: self.startsWith('s3://') || self.startsWith('gs://') ||
+                        self.startsWith('azblob://')
+                  maxSnapshotAge:
+                    description: |-
+                      maxSnapshotAge is how long a stored snapshot is kept, as a duration
+                      such as "168h". The newest snapshot of a container is kept regardless,
+                      so a container never loses its last checkpoint to age. Unset keeps
+                      snapshots until maxSnapshotsPerContainer removes them.
+                    type: string
+                  maxSnapshotsPerContainer:
+                    description: |-
+                      maxSnapshotsPerContainer is the number of stored snapshots kept for
+                      each container; older ones are deleted. Unset keeps every snapshot
+                      that maxSnapshotAge allows.
+                    format: int32
+                    minimum: 1
+                    type: integer
+                required:
+                - location
+                type: object
             type: object
           status:
             description: status defines the observed state of CheckpointRestoreOperator.

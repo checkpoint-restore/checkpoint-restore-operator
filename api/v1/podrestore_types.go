@@ -115,7 +115,11 @@ func ValidateCheckpointNamespaceHint(p, ns string) error {
 }
 
 // ContainerCheckpoint maps a container in the Pod template to the checkpoint
-// archive it should be restored from.
+// archive it should be restored from: either an archive on the target node,
+// or a snapshot in the object storage configured on the
+// CheckpointRestoreOperator, which the checkpoint-store agent on the target
+// node downloads first.
+// +kubebuilder:validation:XValidation:rule="has(self.path) != has(self.storagePath)",message="exactly one of path and storagePath must be set"
 type ContainerCheckpoint struct {
 	// container is the name of the container in the template to restore.
 	// +required
@@ -123,10 +127,31 @@ type ContainerCheckpoint struct {
 	// +kubebuilder:validation:MaxLength=253
 	Container string `json:"container"`
 	// path is the absolute path to the checkpoint .tar archive on the target node.
-	// +required
+	// +optional
 	// +kubebuilder:validation:Pattern=`^/.*\.tar$`
 	// +kubebuilder:validation:MaxLength=4096
-	Path string `json:"path"`
+	Path string `json:"path,omitempty"`
+	// storagePath is the path of a stored snapshot in the configured object
+	// storage, as listed by the store. The snapshot must have been taken in
+	// the PodRestore's namespace unless cross-namespace restores are allowed.
+	// +optional
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=1024
+	StoragePath string `json:"storagePath,omitempty"`
+}
+
+// StoredCheckpointArchivePath returns where the checkpoint-store agent writes
+// the archive of a stored snapshot it downloads for container of a
+// PodRestore, inside checkpointDir. The name follows the kubelet convention
+// with the PodRestore's name and namespace, so it passes the same path and
+// namespace checks as an archive the kubelet wrote, and it ends in the
+// snapshot ID, so a different snapshot never reuses the name.
+func StoredCheckpointArchivePath(checkpointDir string, pr *PodRestore, container, storagePath string) string {
+	if checkpointDir == "" {
+		checkpointDir = DefaultCheckpointDir
+	}
+	return filepath.Join(filepath.Clean(checkpointDir),
+		fmt.Sprintf("checkpoint-%s_%s-%s-%s.tar", pr.Name, pr.Namespace, container, filepath.Base(storagePath)))
 }
 
 // PodRestoreSpec defines the desired state of PodRestore.
@@ -176,6 +201,12 @@ const (
 	// error) when the archive is not reachable from the operator, the normal
 	// cross-node case.
 	ConditionCheckpointsPinned = "CheckpointsPinned"
+	// ConditionCheckpointsDownloaded is set by the checkpoint-store agent on
+	// the target node: True once every checkpoint given by storagePath is
+	// on the node, False with the reason while it is not. The controller
+	// creates the restore Pod only after it is True for the current
+	// generation. A PodRestore without storagePath never has it.
+	ConditionCheckpointsDownloaded = "CheckpointsDownloaded"
 )
 
 // PodRestoreStatus defines the observed state of PodRestore.

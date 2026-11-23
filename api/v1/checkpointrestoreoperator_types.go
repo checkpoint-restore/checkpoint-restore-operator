@@ -52,6 +52,39 @@ type CheckpointRestoreOperatorSpec struct {
 	// +optional
 	// +listType=atomic
 	NamespacePolicies []NamespacePolicySpec `json:"namespacePolicies,omitempty"`
+	// storage keeps a copy of every checkpoint archive in object storage, so
+	// that it outlives its node and can be restored on any other. The
+	// checkpoint-store agent on each node uploads new archives and
+	// downloads stored ones for a PodRestore; the operator enforces the
+	// stored copies' retention. Unset keeps checkpoints on their nodes only.
+	// +optional
+	Storage *CheckpointStorageSpec `json:"storage,omitempty"`
+}
+
+// CheckpointStorageSpec configures object storage for checkpoint archives.
+type CheckpointStorageSpec struct {
+	// location is the storage location URL: s3://bucket/root, with optional
+	// region and endpoint query parameters; gs://bucket/root; or
+	// azblob://container/root with an account or endpoint query parameter.
+	// Credentials come from the provider's default chain in the agent's and
+	// the operator's environment, such as workload identity.
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=2048
+	// +kubebuilder:validation:XValidation:rule="self.startsWith('s3://') || self.startsWith('gs://') || self.startsWith('azblob://')",message="location must be an s3://, gs:// or azblob:// URL"
+	Location string `json:"location"`
+	// maxSnapshotsPerContainer is the number of stored snapshots kept for
+	// each container; older ones are deleted. Unset keeps every snapshot
+	// that maxSnapshotAge allows.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	MaxSnapshotsPerContainer *int32 `json:"maxSnapshotsPerContainer,omitempty"`
+	// maxSnapshotAge is how long a stored snapshot is kept, as a duration
+	// such as "168h". The newest snapshot of a container is kept regardless,
+	// so a container never loses its last checkpoint to age. Unset keeps
+	// snapshots until maxSnapshotsPerContainer removes them.
+	// +optional
+	MaxSnapshotAge *metav1.Duration `json:"maxSnapshotAge,omitempty"`
 }
 
 type GlobalPolicySpec struct {

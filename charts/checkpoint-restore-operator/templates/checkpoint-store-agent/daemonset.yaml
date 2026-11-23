@@ -1,0 +1,98 @@
+{{- if .Values.checkpointStoreAgent.enabled }}
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "checkpoint-restore-operator.storeAgent.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "checkpoint-restore-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: checkpoint-store-agent
+spec:
+  selector:
+    matchLabels:
+      {{- include "checkpoint-restore-operator.storeAgent.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "checkpoint-restore-operator.storeAgent.selectorLabels" . | nindent 8 }}
+        {{- with .Values.checkpointStoreAgent.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.checkpointStoreAgent.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "checkpoint-restore-operator.storeAgent.name" . }}
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.checkpointStoreAgent.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      {{- with .Values.checkpointStoreAgent.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.checkpointStoreAgent.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.checkpointStoreAgent.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: agent
+          image: {{ include "checkpoint-restore-operator.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - /checkpoint-store-agent
+          args:
+            - --checkpoint-dir={{ .Values.operator.restore.checkpointDirectory }}
+            - --state-dir={{ .Values.checkpointStoreAgent.stateDirectory }}
+            - --allow-cross-namespace={{ .Values.operator.restore.allowCrossNamespace }}
+            - --scan-interval={{ .Values.checkpointStoreAgent.scanInterval }}
+            - --settle-time={{ .Values.checkpointStoreAgent.settleTime }}
+            - --health-probe-bind-address={{ .Values.checkpointStoreAgent.health.bindAddress }}
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          {{- with .Values.checkpointStoreAgent.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            periodSeconds: 20
+          ports:
+            - name: health
+              containerPort: {{ include "checkpoint-restore-operator.portFromBindAddress" .Values.checkpointStoreAgent.health.bindAddress }}
+              protocol: TCP
+          resources:
+            {{- toYaml .Values.checkpointStoreAgent.resources | nindent 12 }}
+          volumeMounts:
+            - name: checkpoints
+              mountPath: {{ .Values.operator.restore.checkpointDirectory }}
+            - name: state
+              mountPath: {{ .Values.checkpointStoreAgent.stateDirectory }}
+            # The SDKs write token caches under the home directory.
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: checkpoints
+          hostPath:
+            path: {{ .Values.operator.restore.checkpointDirectory }}
+            type: DirectoryOrCreate
+        - name: state
+          hostPath:
+            path: {{ .Values.checkpointStoreAgent.stateDirectory }}
+            type: DirectoryOrCreate
+        - name: tmp
+          emptyDir: {}
+{{- end }}
