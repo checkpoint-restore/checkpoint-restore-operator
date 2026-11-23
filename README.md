@@ -126,6 +126,8 @@ for both containerd and CRI-O.
 
 See [docs/restore.md](docs/restore.md) for the full design, a `PodRestore`
 example, how to deploy the CRI proxy, and the security considerations.
+To keep checkpoints in S3, Google Cloud Storage or Azure Blob Storage and
+restore them on any node, see [docs/checkpoint-storage.md](docs/checkpoint-storage.md).
 
 ## Getting Started
 

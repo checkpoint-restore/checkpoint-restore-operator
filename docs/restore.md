@@ -65,7 +65,9 @@ Notes:
 - The image only satisfies the kubelet image-pull gate; it plays no role in the
   restore. Set it explicitly if the operator cannot read the archive to discover
   the base image itself.
-- The checkpoint `.tar` must already exist on `targetNode`.
+- The checkpoint `.tar` must already exist on `targetNode`, unless the
+  container names a stored snapshot with `storagePath` instead of `path`; see
+  [Storing checkpoints in object storage](checkpoint-storage.md).
 - `targetNode`, `checkpoints`, and `template` are immutable. Create a new
   `PodRestore` when you need to change the restored workload.
 

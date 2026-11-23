@@ -15,8 +15,10 @@ RUN go mod download
 # internal packages (e.g. internal/checkpointarchive), and go build only
 # compiles what cmd/main.go actually reaches, so the extra directories are free.
 COPY cmd/main.go cmd/main.go
+COPY cmd/checkpoint-store-agent/ cmd/checkpoint-store-agent/
 COPY api/ api/
 COPY internal/ internal/
+COPY pkg/ pkg/
 
 # Build
 # the GOARCH has not a default value to allow the binary be built according to the host where the command
@@ -24,12 +26,15 @@ COPY internal/ internal/
 # the docker BUILDPLATFORM arg will be linux/arm64 when for Apple x86 it will be linux/amd64. Therefore,
 # by leaving it empty we can ensure that the container and binary shipped on it will have the same platform.
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o manager cmd/main.go
+# The checkpoint-store agent DaemonSet runs this image with its own entrypoint.
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o checkpoint-store-agent ./cmd/checkpoint-store-agent
 
 # Use distroless as minimal base image to package the manager binary
 # Refer to https://github.com/GoogleContainerTools/distroless for more details
 FROM gcr.io/distroless/static:nonroot
 WORKDIR /
 COPY --from=builder /workspace/manager .
+COPY --from=builder /workspace/checkpoint-store-agent .
 USER 65532:65532
 
 ENTRYPOINT ["/manager"]

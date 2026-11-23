@@ -20,6 +20,7 @@ import (
 	"crypto/tls"
 	"flag"
 	"os"
+	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -37,6 +38,7 @@ import (
 
 	criuorgv1 "github.com/checkpoint-restore/checkpoint-restore-operator/api/v1"
 	"github.com/checkpoint-restore/checkpoint-restore-operator/internal/controller"
+	"github.com/checkpoint-restore/checkpoint-restore-operator/internal/storageconfig"
 	//+kubebuilder:scaffold:imports
 )
 
@@ -171,13 +173,24 @@ func main() {
 		setupLog.Error(err, "Failed to create controller", "controller", "forensicsnapshotchain")
 		os.Exit(1)
 	}
+	storage := storageconfig.NewProvider(nil)
 	if err := (&controller.PodRestoreReconciler{
 		Client:              mgr.GetClient(),
 		Scheme:              mgr.GetScheme(),
 		CheckpointDir:       restoreCheckpointDir,
 		AllowCrossNamespace: restoreAllowCrossNamespace,
+		Storage:             storage,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "PodRestore")
+		os.Exit(1)
+	}
+	if err := mgr.Add(&controller.StorageRetention{
+		Client:   mgr.GetClient(),
+		Storage:  storage,
+		Interval: 10 * time.Minute,
+		Log:      ctrl.Log.WithName("storage-retention"),
+	}); err != nil {
+		setupLog.Error(err, "unable to add checkpoint storage retention")
 		os.Exit(1)
 	}
 	//+kubebuilder:scaffold:builder

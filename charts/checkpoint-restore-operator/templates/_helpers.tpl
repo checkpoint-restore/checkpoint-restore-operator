@@ -173,3 +173,12 @@ template time instead of deploying a pod stuck in ImagePullBackOff.
 {{- define "checkpoint-restore-operator.criProxy.image" -}}
 {{- include "checkpoint-restore-operator.imageRef" (list . .Values.criProxy.image) -}}
 {{- end }}
+
+{{- define "checkpoint-restore-operator.storeAgent.name" -}}
+{{- include "checkpoint-restore-operator.fullnameWithSuffix" (list . "checkpoint-store-agent") }}
+{{- end }}
+
+{{- define "checkpoint-restore-operator.storeAgent.selectorLabels" -}}
+{{ include "checkpoint-restore-operator.selectorLabels" . }}
+app.kubernetes.io/component: checkpoint-store-agent
+{{- end }}

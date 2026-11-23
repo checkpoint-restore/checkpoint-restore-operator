@@ -40,6 +40,8 @@ import (
 
 	criuorgv1 "github.com/checkpoint-restore/checkpoint-restore-operator/api/v1"
 	"github.com/checkpoint-restore/checkpoint-restore-operator/internal/checkpointarchive"
+	"github.com/checkpoint-restore/checkpoint-restore-operator/internal/storageconfig"
+	"github.com/checkpoint-restore/checkpoint-restore-operator/pkg/checkpointstore"
 )
 
 const (
@@ -80,6 +82,11 @@ type PodRestoreReconciler struct {
 	// the proxy independently verifies the namespace recorded inside the
 	// archive.
 	AllowCrossNamespace bool
+
+	// Storage is the object storage stored checkpoints are restored from;
+	// nil when the operator has none. The controller only reads manifests
+	// from it: the checkpoint-store agent on the target node downloads.
+	Storage *storageconfig.Provider
 }
 
 // +kubebuilder:rbac:groups=criu.org,resources=podrestores,verbs=get;list;watch;create;update;patch;delete
@@ -115,7 +122,9 @@ func (r *PodRestoreReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		if controllerutil.ContainsFinalizer(pr, podRestoreFinalizer) {
 			owner := podRestoreOwnerKey(pr)
 			for _, cp := range pr.Spec.Checkpoints {
-				unpinCheckpoint(logger, cp.Path, owner)
+				if cp.Path != "" {
+					unpinCheckpoint(logger, cp.Path, owner)
+				}
 			}
 			patch := client.MergeFrom(pr.DeepCopy())
 			controllerutil.RemoveFinalizer(pr, podRestoreFinalizer)
@@ -167,7 +176,9 @@ func (r *PodRestoreReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	pinnedAll := true
 	owner := podRestoreOwnerKey(pr)
 	for _, cp := range pr.Spec.Checkpoints {
-		if !pinCheckpoint(logger, cp.Path, owner) {
+		// A stored checkpoint is downloaded for this restore alone, so
+		// nothing else removes it while the PodRestore exists.
+		if cp.Path != "" && !pinCheckpoint(logger, cp.Path, owner) {
 			pinnedAll = false
 		}
 	}
@@ -191,7 +202,14 @@ func (r *PodRestoreReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 			setReady(pr, metav1.ConditionFalse, "PodMissing", "restore Pod disappeared")
 			return r.saveStatus(ctx, pr, before, ctrl.Result{})
 		}
-		newPod, rerr := r.renderPod(logger, pr)
+		// The restore Pod needs every stored checkpoint on its node first.
+		// The agent's condition change re-enqueues us; the requeue covers a
+		// node without a running agent.
+		if waiting, message := storedCheckpointsPending(pr); waiting {
+			setReady(pr, metav1.ConditionFalse, "Downloading", message)
+			return r.saveStatus(ctx, pr, before, ctrl.Result{RequeueAfter: 30 * time.Second})
+		}
+		newPod, rerr := r.renderPod(ctx, logger, pr)
 		if rerr != nil {
 			logger.Error(rerr, "failed to render restore Pod")
 			setReady(pr, metav1.ConditionFalse, "RenderFailed", rerr.Error())
@@ -261,6 +279,17 @@ func (r *PodRestoreReconciler) validateSpec(pr *criuorgv1.PodRestore) error {
 		inTemplate[pr.Spec.Template.Spec.Containers[i].Name] = true
 	}
 	for _, cp := range pr.Spec.Checkpoints {
+		if cp.StoragePath != "" {
+			// The agent checks the snapshot's namespace when it downloads,
+			// and names the archive so the CRI proxy's checks apply.
+			if cp.Path != "" {
+				return fmt.Errorf("container %q sets both path and storagePath", cp.Container)
+			}
+			if !inTemplate[cp.Container] {
+				return fmt.Errorf("container %q is not defined in the Pod template", cp.Container)
+			}
+			continue
+		}
 		if err := criuorgv1.ValidateCheckpointPathInDir(cp.Path, r.CheckpointDir); err != nil {
 			return fmt.Errorf("container %q: %w", cp.Container, err)
 		}
@@ -279,7 +308,11 @@ func (r *PodRestoreReconciler) validateSpec(pr *criuorgv1.PodRestore) error {
 // renderPod builds the restore Pod from the template, pinning it to the target
 // node, annotating each restored container with its checkpoint path, and filling
 // in the base image from the checkpoint when the template leaves it empty.
-func (r *PodRestoreReconciler) renderPod(logger logr.Logger, pr *criuorgv1.PodRestore) (*corev1.Pod, error) {
+func (r *PodRestoreReconciler) renderPod(
+	ctx context.Context,
+	logger logr.Logger,
+	pr *criuorgv1.PodRestore,
+) (*corev1.Pod, error) {
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Annotations: copyStringMap(pr.Spec.Template.Annotations),
@@ -305,11 +338,22 @@ func (r *PodRestoreReconciler) renderPod(logger logr.Logger, pr *criuorgv1.PodRe
 		if idx < 0 {
 			return nil, fmt.Errorf("container %q is not defined in the Pod template", cp.Container)
 		}
+		path := cp.Path
+		if cp.StoragePath != "" {
+			path = criuorgv1.StoredCheckpointArchivePath(r.CheckpointDir, pr, cp.Container, cp.StoragePath)
+		}
 		// The node-side restore mechanism reads this to restore the container.
-		pod.Annotations[criuorgv1.RestoreCheckpointPathAnnotationPrefix+cp.Container] = cp.Path
+		pod.Annotations[criuorgv1.RestoreCheckpointPathAnnotationPrefix+cp.Container] = path
 
 		// The image only satisfies the kubelet's image-pull gate. Prefer an
 		// explicit template image; otherwise use the checkpoint's base image.
+		if pod.Spec.Containers[idx].Image == "" && cp.StoragePath != "" {
+			img, err := r.storedBaseImage(ctx, cp.StoragePath)
+			if err != nil {
+				return nil, fmt.Errorf("container %q: %w", cp.Container, err)
+			}
+			pod.Spec.Containers[idx].Image = img
+		}
 		if pod.Spec.Containers[idx].Image == "" {
 			img, err := readCheckpointBaseImage(logger, cp.Path)
 			if err != nil {
@@ -323,6 +367,47 @@ func (r *PodRestoreReconciler) renderPod(logger logr.Logger, pr *criuorgv1.PodRe
 		return nil, err
 	}
 	return pod, nil
+}
+
+// storedCheckpointsPending reports whether the PodRestore restores a stored
+// checkpoint that the agent on the target node has not yet reported
+// downloaded for its current generation, and the condition's message.
+func storedCheckpointsPending(pr *criuorgv1.PodRestore) (bool, string) {
+	stored := false
+	for _, cp := range pr.Spec.Checkpoints {
+		stored = stored || cp.StoragePath != ""
+	}
+	if !stored {
+		return false, ""
+	}
+	c := meta.FindStatusCondition(pr.Status.Conditions, criuorgv1.ConditionCheckpointsDownloaded)
+	switch {
+	case c == nil || c.ObservedGeneration != pr.Generation:
+		return true, "waiting for the checkpoint-store agent on " + pr.Spec.TargetNode + " to download the stored checkpoints"
+	case c.Status != metav1.ConditionTrue:
+		return true, "stored checkpoints are not on " + pr.Spec.TargetNode + ": " + c.Message
+	}
+	return false, ""
+}
+
+// storedBaseImage returns the base image recorded in the manifest of a
+// stored snapshot.
+func (r *PodRestoreReconciler) storedBaseImage(ctx context.Context, storagePath string) (string, error) {
+	var store *checkpointstore.Store
+	if r.Storage != nil {
+		store, _ = r.Storage.Get()
+	}
+	if store == nil {
+		return "", fmt.Errorf("the template names no image and checkpoint storage is not configured to read it from")
+	}
+	m, err := store.Read(ctx, storagePath)
+	if err != nil {
+		return "", err
+	}
+	if m.Image == "" {
+		return "", fmt.Errorf("the template names no image and snapshot %s records none", storagePath)
+	}
+	return m.Image, nil
 }
 
 func copyStringMap(in map[string]string) map[string]string {

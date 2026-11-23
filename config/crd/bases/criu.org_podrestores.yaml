@@ -65,7 +65,10 @@ spec:
                 items:
                   description: |-
                     ContainerCheckpoint maps a container in the Pod template to the checkpoint
-                    archive it should be restored from.
+                    archive it should be restored from: either an archive on the target node,
+                    or a snapshot in the object storage configured on the
+                    CheckpointRestoreOperator, which the checkpoint-store agent on the target
+                    node downloads first.
                   properties:
                     container:
                       description: container is the name of the container in the template
@@ -79,10 +82,20 @@ spec:
                       maxLength: 4096
                       pattern: ^/.*\.tar$
                       type: string
+                    storagePath:
+                      description: |-
+                        storagePath is the path of a stored snapshot in the configured object
+                        storage, as listed by the store. The snapshot must have been taken in
+                        the PodRestore's namespace unless cross-namespace restores are allowed.
+                      maxLength: 1024
+                      minLength: 1
+                      type: string
                   required:
                   - container
-                  - path
                   type: object
+                  x-kubernetes-validations:
+                  - message: exactly one of path and storagePath must be set
+                    rule: has(self.path) != has(self.storagePath)
                 maxItems: 32
                 minItems: 1
                 type: array
